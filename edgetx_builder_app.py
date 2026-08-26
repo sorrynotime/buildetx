@@ -90,8 +90,8 @@ class App:
     def __init__(self, root: tk.Tk):
         self.root = root
         self.root.title("EdgeTX Builder - Windows")
-        self.root.geometry("900x820")
-        self.root.minsize(980, 720)
+        self.root.geometry("980x856")
+        self.root.resizable(False, False)
         self.events: queue.Queue[tuple[str, str]] = queue.Queue()
         self.busy = False
         self.spinner_index = 0
@@ -130,12 +130,12 @@ class App:
         self.capabilities: set[str] = set()
         self.layout_vars: dict[str, tk.IntVar] = {
             "window_width": tk.IntVar(value=980),
-            "window_height": tk.IntVar(value=866),
+            "window_height": tk.IntVar(value=856),
             "outer_padding": tk.IntVar(value=10),
             "column_gap": tk.IntVar(value=5),
             "left_weight": tk.IntVar(value=1),
             "right_weight": tk.IntVar(value=8),
-            "panels_bottom_gap": tk.IntVar(value=8),
+            "panels_bottom_gap": tk.IntVar(value=10),
             "target_width": tk.IntVar(value=412),
             "target_height": tk.IntVar(value=298),
             "target_x": tk.IntVar(value=1),
@@ -177,9 +177,8 @@ class App:
             "support_columns": tk.IntVar(value=5),
             "support_item_gap": tk.IntVar(value=1),
             "support_row_gap": tk.IntVar(value=1),
-            "button_config_gap": tk.IntVar(value=2),
-            "panels_bottom_gap": tk.IntVar(value=8),
-            "button_row_pady": tk.IntVar(value=2),
+            "button_config_gap": tk.IntVar(value=1),
+            "button_row_pady": tk.IntVar(value=6),
             "button_item_padx": tk.IntVar(value=3),
             "build_width": tk.IntVar(value=960),
             "build_height": tk.IntVar(value=306),
@@ -236,6 +235,29 @@ class App:
                         font=("Segoe UI", 9))
         style.configure("Panel.TCheckbutton", background="#ffffff",
                         foreground="#243247", font=("Segoe UI", 9))
+        self._checkbox_empty = tk.PhotoImage(width=14, height=14)
+        self._checkbox_checked = tk.PhotoImage(width=14, height=14)
+        for image, fill in ((self._checkbox_empty, "#ffffff"),
+                            (self._checkbox_checked, "#2563eb")):
+            image.put(fill, to=(1, 1, 13, 13))
+            image.put("#90a4b8", to=(0, 0, 14, 1))
+            image.put("#90a4b8", to=(0, 13, 14, 14))
+            image.put("#90a4b8", to=(0, 0, 1, 14))
+            image.put("#90a4b8", to=(13, 0, 14, 14))
+        for x, y in ((3, 7), (4, 8), (5, 9), (6, 8), (7, 7), (8, 6), (9, 5), (10, 4)):
+            self._checkbox_checked.put("#ffffff", to=(x, y, x + 2, y + 2))
+        style.element_create(
+            "Builder.CheckIndicator", "image", self._checkbox_empty,
+            ("selected", self._checkbox_checked), border=0, sticky="w",
+        )
+        check_layout = [
+            ("Builder.CheckIndicator", {"side": "left", "sticky": ""}),
+            ("Checkbutton.padding", {"sticky": "nswe", "children": [
+                ("Checkbutton.label", {"sticky": "nswe"})
+            ]}),
+        ]
+        style.layout("TCheckbutton", check_layout)
+        style.layout("Panel.TCheckbutton", check_layout)
         style.configure("Panel.TRadiobutton", background="#ffffff",
                         foreground="#243247", font=("Segoe UI", 9))
         style.configure(
@@ -314,10 +336,7 @@ class App:
             for name, variable in self.layout_vars.items()
             if name != "window_width" and name != "window_height"
         }
-        width = self._layout_value("window_width", 980)
-        height = self._layout_value("window_height", 876)
-        self.root.geometry(f"{width}x{height}")
-        self.root.minsize(min(width, 980), min(height, 720))
+        self.root.geometry("980x856")
         self.outer.configure(padding=values["outer_padding"])
         self.panels.columnconfigure(0, weight=values["left_weight"])
         self.panels.columnconfigure(1, weight=values["right_weight"])
@@ -478,12 +497,12 @@ class App:
     def _reset_layout_params(self):
         defaults = {
             "window_width": 980,
-            "window_height": 866,
+            "window_height": 856,
             "outer_padding": 10,
             "column_gap": 5,
             "left_weight": 1,
             "right_weight": 8,
-            "panels_bottom_gap": 8,
+            "panels_bottom_gap": 10,
             "target_width": 412,
             "target_height": 298,
             "target_x": 1,
@@ -525,8 +544,8 @@ class App:
             "support_columns": 5,
             "support_item_gap": 1,
             "support_row_gap": 1,
-            "button_config_gap": 2,
-            "button_row_pady": 2,
+            "button_config_gap": 1,
+            "button_row_pady": 6,
             "button_item_padx": 3,
             "build_width": 960,
             "build_height": 306,
@@ -555,8 +574,6 @@ class App:
         body.pack(fill="both", expand=True)
         groups = (
             ("窗口与整体", (
-                ("window_width", "窗口宽度", 700, 1800),
-                ("window_height", "窗口高度", 500, 1400),
                 ("outer_padding", "外边距", 0, 40),
                 ("column_gap", "左右列间距", 0, 40),
                 ("left_weight", "左列比例", 1, 8),
@@ -708,14 +725,14 @@ class App:
         self.brand_combo = ttk.Combobox(
             target_inner, textvariable=self.brand, state="readonly", width=18
         )
-        self.brand_combo.grid(row=1, column=1, sticky="ew", padx=(10, 0), pady=3)
+        self.brand_combo.grid(row=1, column=1, columnspan=3, sticky="ew", padx=(10, 0), pady=3)
         self.brand_combo.bind("<<ComboboxSelected>>", lambda _e: self._load_models())
         target_label = ttk.Label(target_inner, text="型号", style="Panel.TLabel")
         target_label.grid(row=2, column=0, sticky="w", pady=3)
         self.target_combo = ttk.Combobox(
             target_inner, textvariable=self.target, state="readonly", width=18
         )
-        self.target_combo.grid(row=2, column=1, sticky="ew", padx=(10, 0), pady=3)
+        self.target_combo.grid(row=2, column=1, columnspan=3, sticky="ew", padx=(10, 0), pady=3)
         self.target_combo.bind("<<ComboboxSelected>>", lambda _e: self._target_dir())
         type_label = ttk.Label(target_inner, text="类型", style="Panel.TLabel")
         type_label.grid(row=3, column=0, sticky="w", pady=3)
@@ -723,30 +740,28 @@ class App:
             target_inner, textvariable=self.build_type, values=("Release", "Debug"),
             state="readonly", width=12
         )
-        type_combo.grid(row=3, column=1, sticky="ew", padx=(10, 0), pady=3)
+        type_combo.grid(row=3, column=1, columnspan=3, sticky="ew", padx=(10, 0), pady=3)
         mode_label = ttk.Label(target_inner, text="摇杆模式", style="Panel.TLabel")
         mode_label.grid(row=4, column=0, sticky="w", pady=3)
         mode_combo = ttk.Combobox(
             target_inner, textvariable=self.default_mode,
             values=("", "1", "2", "3", "4"), state="readonly", width=10
         )
-        mode_combo.grid(row=4, column=1, sticky="ew", pady=3)
+        mode_combo.grid(row=4, column=1, columnspan=3, sticky="ew", padx=(10, 0), pady=3)
         dir_label = ttk.Label(target_inner, text="目录", style="Panel.TLabel")
         dir_label.grid(row=6, column=0, sticky="w", pady=3)
         dir_entry = ttk.Entry(target_inner, textvariable=self.build_dir, width=34)
-        dir_entry.grid(row=6, column=1, columnspan=2, sticky="ew", padx=(10, 6), pady=3)
-        default_button = ttk.Button(target_inner, text="默认", command=self._target_dir)
-        default_button.grid(row=6, column=3, sticky="ew", pady=3)
+        dir_entry.grid(row=6, column=1, columnspan=3, sticky="ew", padx=(10, 0), pady=3)
         lang_label = ttk.Label(target_inner, text="语言", style="Panel.TLabel")
         lang_label.grid(row=5, column=0, sticky="w", pady=3)
         lang_combo = ttk.Combobox(
             target_inner, textvariable=self.translation, values=LANGUAGES,
             state="readonly", width=12
         )
-        lang_combo.grid(row=5, column=1, sticky="ew", pady=3)
+        lang_combo.grid(row=5, column=1, columnspan=3, sticky="ew", padx=(10, 0), pady=3)
         self.target_labels.extend((brand_label, target_label, type_label, mode_label, dir_label, lang_label))
         self.target_combos.extend((self.brand_combo, self.target_combo, type_combo, mode_combo, lang_combo))
-        self.target_widgets.extend((brand_label, self.brand_combo, load_button, target_label, self.target_combo, type_label, type_combo, mode_label, mode_combo, dir_label, dir_entry, default_button, lang_label, lang_combo))
+        self.target_widgets.extend((brand_label, self.brand_combo, load_button, target_label, self.target_combo, type_label, type_combo, mode_label, mode_combo, dir_label, dir_entry, lang_label, lang_combo))
 
         right_column = ttk.Frame(panels, style="App.TFrame")
         self.right_column = right_column
@@ -826,33 +841,39 @@ class App:
         )
         self.hardware_panel = hardware_panel
         self.hardware_frame = hardware
-        self.hardware_option_frames: list[ttk.Frame] = []
+        self.hardware_option_frames: list[tk.Frame] = []
         hardware_panel.grid(row=1, column=0, columnspan=2, sticky="w", pady=(8, 0))
         ttk.Label(hardware, text="硬件配置", style="PanelTitle.TLabel").grid(
             row=0, column=0, columnspan=4, sticky="w", pady=(0, 5)
         )
         for option, label in HARDWARE_BOOLEAN_OPTIONS:
-            frame = ttk.Frame(hardware, style="Panel.TFrame")
+            frame = tk.Frame(
+                hardware, background="#ffffff", bd=0,
+                highlightbackground="#c8d8e8", highlightthickness=1,
+            )
             frame.columnconfigure(0, minsize=52)
             ttk.Label(frame, text=label, style="Panel.TLabel", width=12).grid(
-                row=0, column=0, sticky="w"
+                row=0, column=0, sticky="w", padx=(5, 3), pady=2
             )
             for column, text in enumerate(HARDWARE_CHOICES, start=1):
                 ttk.Radiobutton(
                     frame, text=text, value=text, variable=self.hardware_vars[option],
                     style="Panel.TRadiobutton",
-                ).grid(row=0, column=column, sticky="w", padx=(0, 5))
+                ).grid(row=0, column=column, sticky="w", padx=(0, 3), pady=2)
             self.hardware_option_frames.append(frame)
-        sticks_frame = ttk.Frame(hardware, style="Panel.TFrame")
+        sticks_frame = tk.Frame(
+            hardware, background="#ffffff", bd=0,
+            highlightbackground="#c8d8e8", highlightthickness=1,
+        )
         sticks_frame.columnconfigure(0, minsize=52)
         ttk.Label(sticks_frame, text="摇杆类型", style="Panel.TLabel", width=12).grid(
-            row=0, column=0, sticky="w"
+            row=0, column=0, sticky="w", padx=(5, 3), pady=2
         )
         for column, text in enumerate(("默认", "STANDARD", "HORUS"), start=1):
             ttk.Radiobutton(
                 sticks_frame, text=text, value=text, variable=self.sticks_type,
                 style="Panel.TRadiobutton",
-            ).grid(row=0, column=column, sticky="w", padx=(0, 5))
+            ).grid(row=0, column=column, sticky="w", padx=(0, 3), pady=2)
         self.hardware_option_frames.append(sticks_frame)
         self.hardware_warning_label = ttk.Label(
             hardware, textvariable=self.hardware_warning, foreground="#b45309",
