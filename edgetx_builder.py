@@ -1083,7 +1083,6 @@ class App:
             ("配置 CMake", self.configure),
             ("编译固件", self.build),
             ("清除日志", self.clear_log),
-            ("布局调试", self.open_layout_debug),
         ):
             button = ttk.Button(buttons, text=text, command=command)
             button.pack(
