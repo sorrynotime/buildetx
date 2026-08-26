@@ -107,12 +107,25 @@ def _decode(raw: bytes) -> str:
     return raw.decode("gb18030", errors="replace") if "�" in text else text
 
 
+def _subprocess_creationflags() -> int:
+    if sys.platform == "win32":
+        return getattr(subprocess, "CREATE_NO_WINDOW", 0)
+    return 0
+
+
 def run_capture(args: list[str], cwd: Path | None = None, on_line=None) -> tuple[int, str]:
     try:
+        creationflags = _subprocess_creationflags()
         if on_line is None:
-            p = subprocess.run(args, cwd=cwd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+            p = subprocess.run(
+                args, cwd=cwd, stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT, creationflags=creationflags,
+            )
             return p.returncode, _decode(p.stdout or b"").strip()
-        p = subprocess.Popen(args, cwd=cwd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+        p = subprocess.Popen(
+            args, cwd=cwd, stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT, creationflags=creationflags,
+        )
         lines = []
         assert p.stdout is not None
         for raw_line in iter(p.stdout.readline, b""):
@@ -183,9 +196,21 @@ def read_target_catalog(source: Path) -> dict[str, dict[str, dict[str, str]]]:
 # GUI application.
 
 TOOLS = ("cmake", "ninja", "arm-none-eabi-gcc", "python", "git")
-REQUIRED_IMPORTS = {"PIL": "Pillow", "lz4.block": "lz4"}
+REQUIRED_IMPORTS = {
+    "PIL": "Pillow",
+    "lz4.block": "lz4",
+    "elftools": "pyelftools",
+}
+PYTHON_PACKAGE_ALIASES = {
+    module.split(".", 1)[0]: package
+    for module, package in REQUIRED_IMPORTS.items()
+}
 DEFAULT_SOURCE = r"E:\Code\edgetx"
 DEFAULT_VS_SHELL = r"C:\ProgramData\Microsoft\Windows\Start Menu\Programs\Visual Studio\Visual Studio Tools\Developer PowerShell for VS.lnk"
+APP_NAME = "EdgeTX Builder"
+APP_VERSION = "1.0"
+APP_AUTHOR = "大魔王~"
+APP_EMAIL = "13471217561@163.com"
 LANGUAGES = (
     "CN", "CZ", "DA", "DE", "EN", "ES", "FI", "FR", "HE", "HU", "IT",
     "JP", "KO", "NL", "PL", "PT", "RU", "SE", "SK", "TW", "UA",
@@ -239,10 +264,20 @@ MISSING_TOOL_HELP = {
 }
 
 
+def external_python() -> str | None:
+    return shutil.which("python")
+
+
+def resource_path(name: str) -> Path:
+    base = Path(getattr(sys, "_MEIPASS", Path(__file__).resolve().parent))
+    return base / name
+
+
 class App:
     def __init__(self, root: tk.Tk):
         self.root = root
         self.root.title("EdgeTX Builder - Windows")
+        self._set_window_icon()
         self.root.geometry("980x856")
         self.root.resizable(False, False)
         self.events: queue.Queue[tuple[str, str]] = queue.Queue()
@@ -347,11 +382,49 @@ class App:
 
         self._setup_theme()
         self._build_ui()
+        self._setup_context_menu()
         for variable in self.layout_vars.values():
             variable.trace_add("write", self._layout_changed)
         self._apply_layout()
         self.root.after(150, self._drain_events)
         self.root.after(180, self.spinner_tick)
+
+    def _set_window_icon(self):
+        icon = resource_path("edgetx_tx.ico")
+        if icon.is_file():
+            try:
+                self.root.iconbitmap(default=str(icon))
+            except tk.TclError:
+                pass
+
+    def _setup_context_menu(self):
+        self.context_menu = tk.Menu(self.root, tearoff=False)
+        self.context_menu.add_command(label="关于", command=self.show_about)
+        self._bind_context_menu(self.root)
+        self._bind_context_menu(self.outer)
+
+    def _bind_context_menu(self, widget):
+        if isinstance(widget, (tk.Frame, ttk.Frame, tk.Canvas)):
+            widget.bind("<Button-3>", self._show_context_menu, add="+")
+        for child in widget.winfo_children():
+            self._bind_context_menu(child)
+
+    def _show_context_menu(self, event):
+        try:
+            self.context_menu.tk_popup(event.x_root, event.y_root)
+        finally:
+            self.context_menu.grab_release()
+
+    def show_about(self):
+        messagebox.showinfo(
+            "关于",
+            f"{APP_NAME}\n"
+            f"版本：{APP_VERSION}\n\n"
+            f"作者：{APP_AUTHOR}\n"
+            f"邮箱：{APP_EMAIL}\n\n"
+            "用于 Windows 下配置和构建 EdgeTX 固件。",
+            parent=self.root,
+        )
 
     def _setup_theme(self):
         style = ttk.Style(self.root)
@@ -1297,12 +1370,16 @@ class App:
             for line in output.splitlines():
                 match = re.match(r"^([0-9a-f]{7,40})\s+(.*)$", line.strip())
                 lines.append(f"[{match.group(1)}] {match.group(2)}" if match else line.strip())
+        python = external_python()
         for module, package in REQUIRED_IMPORTS.items():
             check = f"import {module}" if "." not in module else f"import {module}"
-            code, _ = run_capture([sys.executable, "-c", check])
+            code = 1
+            if python:
+                code, _ = run_capture([python, "-c", check])
             lines.append(f"{'OK' if code == 0 else '缺失'} Python: {package}")
             if code != 0:
-                lines.append(f"  处理方法: 执行 {sys.executable} -m pip install {package}")
+                command = f"{python} -m pip install {package}" if python else f"python -m pip install {package}"
+                lines.append(f"  处理方法: 执行 {command}")
         path_clang, path_clang_version = path_libclang()
         preferred_clang, preferred_clang_version = find_compatible_libclang()
         if preferred_clang:
@@ -1335,10 +1412,17 @@ class App:
         if not requirements.is_file():
             messagebox.showerror("缺少文件", "源码目录中没有 requirements.txt。")
             return
-        if not messagebox.askyesno("确认安装", "将使用当前 Python 执行 pip install -r requirements.txt，是否继续？"):
+        python = external_python()
+        if not python:
+            messagebox.showerror("缺少 Python", "未在 PATH 中找到 python，请先安装 Python 并重启本程序。")
+            return
+        if not messagebox.askyesno(
+            "确认安装",
+            f"将使用 {python} 安装 requirements.txt 中列出的 Python 依赖，是否继续？",
+        ):
             return
         self.run_async(lambda: self._command_worker(
-            [sys.executable, "-m", "pip", "install", "-r", str(requirements)], source,
+            [python, "-m", "pip", "install", "-r", str(requirements)], source,
             "Python 依赖安装完成"))
 
     def _ps_prefix(self) -> str:
@@ -1477,6 +1561,29 @@ class App:
             result = "当前目标已经是最新状态，无需重新编译"
         else:
             result = success if code == 0 else f"失败，退出码 {code}"
+        if code != 0:
+            missing_modules = sorted(set(re.findall(
+                r"ModuleNotFoundError:\s*No module named ['\"]([^'\"]+)['\"]",
+                output,
+            )))
+            if missing_modules:
+                packages = []
+                for module in missing_modules:
+                    package = PYTHON_PACKAGE_ALIASES.get(
+                        module.split(".", 1)[0], module.split(".", 1)[0]
+                    )
+                    if package not in packages:
+                        packages.append(package)
+                requirements = Path(self.source.get().strip()) / "requirements.txt"
+                self.events.put((
+                    "log",
+                    "检测到缺少 Python 依赖："
+                    f"{', '.join(packages)}\n"
+                    f"请打开：{requirements}\n"
+                    f"添加一行：{chr(10).join(packages)}\n"
+                    "保存后，点击“安装 Python 依赖”。",
+                ))
+                result = f"失败：缺少 Python 依赖 {', '.join(packages)}"
         self.events.put(("status", result))
         if code == 0 and success == "固件编译完成":
             self.events.put(("log", "编译成功了，固件已生成。" if "no work to do" not in output.lower()

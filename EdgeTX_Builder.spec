@@ -5,7 +5,7 @@ a = Analysis(
     ['edgetx_builder.py'],
     pathex=[],
     binaries=[],
-    datas=[],
+    datas=[('edgetx_tx.ico', '.')],
     hiddenimports=[],
     hookspath=[],
     hooksconfig={},
@@ -35,4 +35,5 @@ exe = EXE(
     target_arch=None,
     codesign_identity=None,
     entitlements_file=None,
+    icon=['edgetx_tx.ico'],
 )
