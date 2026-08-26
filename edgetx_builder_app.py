@@ -65,15 +65,15 @@ MODULE_OPTIONS = (
     ("GHOST", "Ghost"),
 )
 HARDWARE_BOOLEAN_OPTIONS = (
-    ("FLYSKY_GIMBAL", "串口/霍尔摇杆"),
+    ("FLYSKY_GIMBAL", "FS 霍尔摇杆"),
     ("BLUETOOTH", "蓝牙模块"),
     ("INTERNAL_GPS", "内置 GPS"),
     ("STICK_DEAD_ZONE", "摇杆死区"),
 )
 HARDWARE_CHOICES = {
-    "自动": None,
-    "启用": "YES",
-    "禁用": "NO",
+    "默认": None,
+    "开启": "YES",
+    "关闭": "NO",
 }
 MISSING_TOOL_HELP = {
     "cmake": "请安装 CMake，并将其 bin 目录添加到 PATH 后重启本程序。",
@@ -111,10 +111,10 @@ class App:
             for option, _, default in COMMON_FEATURES
         }
         self.hardware_vars = {
-            option: tk.StringVar(value="自动")
+            option: tk.StringVar(value="默认")
             for option, _ in HARDWARE_BOOLEAN_OPTIONS
         }
-        self.sticks_type = tk.StringVar(value="自动")
+        self.sticks_type = tk.StringVar(value="默认")
         self.hardware_defaults: dict[str, str] = {}
         self.hardware_warning = tk.StringVar(value="")
         self.protocol_vars = {
@@ -136,42 +136,42 @@ class App:
             "left_weight": tk.IntVar(value=1),
             "right_weight": tk.IntVar(value=8),
             "panels_bottom_gap": tk.IntVar(value=8),
-            "target_width": tk.IntVar(value=410),
-            "target_height": tk.IntVar(value=236),
+            "target_width": tk.IntVar(value=412),
+            "target_height": tk.IntVar(value=298),
             "target_x": tk.IntVar(value=1),
             "target_y": tk.IntVar(value=1),
             "target_pad_x": tk.IntVar(value=1),
             "target_pad_y": tk.IntVar(value=1),
             "target_label_gap": tk.IntVar(value=1),
-            "target_column_gap": tk.IntVar(value=1),
-            "target_row_gap": tk.IntVar(value=3),
+            "target_column_gap": tk.IntVar(value=6),
+            "target_row_gap": tk.IntVar(value=6),
             "target_control_width": tk.IntVar(value=8),
-            "target_combo_gap": tk.IntVar(value=6),
+            "target_combo_gap": tk.IntVar(value=10),
             "target_button_height": tk.IntVar(value=2),
             "feature_width": tk.IntVar(value=620),
-            "feature_height": tk.IntVar(value=236),
+            "feature_height": tk.IntVar(value=102),
             "feature_x": tk.IntVar(value=1),
             "feature_y": tk.IntVar(value=1),
             "feature_pad_x": tk.IntVar(value=1),
             "feature_pad_y": tk.IntVar(value=1),
-            "hardware_width": tk.IntVar(value=410),
-            "hardware_height": tk.IntVar(value=200),
+            "hardware_width": tk.IntVar(value=960),
+            "hardware_height": tk.IntVar(value=120),
             "hardware_x": tk.IntVar(value=1),
             "hardware_y": tk.IntVar(value=1),
             "hardware_pad_x": tk.IntVar(value=1),
             "hardware_pad_y": tk.IntVar(value=1),
-            "hardware_label_gap": tk.IntVar(value=25),
+            "hardware_label_gap": tk.IntVar(value=20),
             "hardware_row_gap": tk.IntVar(value=1),
-            "hardware_combo_width": tk.IntVar(value=5),
+            "hardware_columns": tk.IntVar(value=3),
             "protocol_width": tk.IntVar(value=620),
             "protocol_height": tk.IntVar(value=92),
             "protocol_x": tk.IntVar(value=1),
-            "protocol_y": tk.IntVar(value=1),
+            "protocol_y": tk.IntVar(value=2),
             "module_width": tk.IntVar(value=620),
             "module_height": tk.IntVar(value=100),
             "module_x": tk.IntVar(value=1),
             "module_y": tk.IntVar(value=1),
-            "support_gap": tk.IntVar(value=7),
+            "support_gap": tk.IntVar(value=1),
             "support_pad_x": tk.IntVar(value=1),
             "support_pad_y": tk.IntVar(value=1),
             "support_columns": tk.IntVar(value=5),
@@ -235,6 +235,8 @@ class App:
         style.configure("TCheckbutton", background="#ffffff", foreground="#243247",
                         font=("Segoe UI", 9))
         style.configure("Panel.TCheckbutton", background="#ffffff",
+                        foreground="#243247", font=("Segoe UI", 9))
+        style.configure("Panel.TRadiobutton", background="#ffffff",
                         foreground="#243247", font=("Segoe UI", 9))
         style.configure(
             "TEntry", fieldbackground="#ffffff", background="#ffffff",
@@ -320,13 +322,8 @@ class App:
         self.panels.columnconfigure(0, weight=values["left_weight"])
         self.panels.columnconfigure(1, weight=values["right_weight"])
         gap = values["column_gap"]
-        for widget, left, right in (
-            (self.panels.grid_slaves(row=0, column=0)[0], 0, gap),
-            (self.panels.grid_slaves(row=0, column=1)[0], gap, 0),
-            (self.panels.grid_slaves(row=1, column=0)[0], 0, gap),
-            (self.panels.grid_slaves(row=1, column=1)[0], gap, 0),
-        ):
-            widget.grid_configure(padx=(left, right))
+        self.left_column.grid_configure(padx=(0, gap))
+        self.right_column.grid_configure(padx=(gap, 0))
         self.target_panel.configure(
             width=values["target_width"], height=values["target_height"]
         )
@@ -358,7 +355,7 @@ class App:
             width=values["hardware_width"], height=values["hardware_height"]
         )
         self.hardware_panel.grid_configure(
-            padx=(values["hardware_x"], gap), pady=(8 + values["hardware_y"], 0)
+            padx=(values["hardware_x"], 0), pady=(8 + values["hardware_y"], 0)
         )
         self.protocol_panel.configure(
             width=values["protocol_width"], height=values["protocol_height"]
@@ -375,13 +372,10 @@ class App:
         self.hardware_frame.configure(
             padx=values["hardware_pad_x"], pady=values["hardware_pad_y"]
         )
-        for label_widget, combo in zip(self.hardware_labels, self.hardware_combos):
-            label_widget.grid_configure(
-                padx=(0, values["hardware_label_gap"]),
-                pady=values["hardware_row_gap"],
-            )
-            combo.configure(width=values["hardware_combo_width"])
-            combo.grid_configure(pady=values["hardware_row_gap"])
+        self._regrid_hardware_widgets(
+            values["hardware_columns"], values["hardware_label_gap"],
+            values["hardware_row_gap"],
+        )
         for frame in (self.protocol_frame, self.modules_frame):
             frame.configure(
                 padx=values["support_pad_x"], pady=values["support_pad_y"]
@@ -439,6 +433,20 @@ class App:
                 pady=row_gap,
             )
 
+    def _regrid_hardware_widgets(self, columns: int, item_gap: int, row_gap: int) -> None:
+        for index, frame in enumerate(self.hardware_option_frames):
+            frame.grid_configure(
+                row=index // columns + 1,
+                column=index % columns,
+                sticky="w", padx=(0, item_gap), pady=row_gap,
+            )
+        for column in range(columns):
+            self.hardware_frame.columnconfigure(column, weight=1)
+        self.hardware_warning_label.grid_configure(
+            row=(len(self.hardware_option_frames) - 1) // columns + 2,
+            column=0, columnspan=columns,
+        )
+
     def _layout_payload(self) -> dict[str, int]:
         return {
             name: self._layout_value(name, 1)
@@ -476,42 +484,42 @@ class App:
             "left_weight": 1,
             "right_weight": 8,
             "panels_bottom_gap": 8,
-            "target_width": 410,
-            "target_height": 236,
+            "target_width": 412,
+            "target_height": 298,
             "target_x": 1,
             "target_y": 1,
             "target_pad_x": 1,
             "target_pad_y": 1,
             "target_label_gap": 1,
-            "target_column_gap": 1,
-            "target_row_gap": 3,
+            "target_column_gap": 6,
+            "target_row_gap": 6,
             "target_control_width": 8,
-            "target_combo_gap": 6,
+            "target_combo_gap": 10,
             "target_button_height": 2,
             "feature_width": 620,
-            "feature_height": 236,
+            "feature_height": 102,
             "feature_x": 1,
             "feature_y": 1,
             "feature_pad_x": 1,
             "feature_pad_y": 1,
-            "hardware_width": 410,
-            "hardware_height": 200,
+            "hardware_width": 960,
+            "hardware_height": 120,
             "hardware_x": 1,
             "hardware_y": 1,
             "hardware_pad_x": 1,
             "hardware_pad_y": 1,
-            "hardware_label_gap": 25,
+            "hardware_label_gap": 20,
             "hardware_row_gap": 1,
-            "hardware_combo_width": 5,
+            "hardware_columns": 3,
             "protocol_width": 620,
             "protocol_height": 92,
             "protocol_x": 1,
-            "protocol_y": 1,
+            "protocol_y": 2,
             "module_width": 620,
             "module_height": 100,
             "module_x": 1,
             "module_y": 1,
-            "support_gap": 7,
+            "support_gap": 1,
             "support_pad_x": 1,
             "support_pad_y": 1,
             "support_columns": 5,
@@ -569,11 +577,11 @@ class App:
                 ("feature_pad_x", "横向内边距", 0, 50), ("feature_pad_y", "纵向内边距", 0, 50),
             )),
             ("硬件配置", (
-                ("hardware_width", "宽度", 180, 800), ("hardware_height", "高度", 120, 500),
+                ("hardware_width", "宽度", 180, 1200), ("hardware_height", "高度", 120, 500),
                 ("hardware_x", "位置 X", 0, 200), ("hardware_y", "位置 Y", 0, 200),
                 ("hardware_pad_x", "横向内边距", 0, 50), ("hardware_pad_y", "纵向内边距", 0, 50),
-                ("hardware_label_gap", "标签间距", 0, 60), ("hardware_row_gap", "行间距", 0, 30),
-                ("hardware_combo_width", "下拉框宽度", 5, 30),
+                ("hardware_label_gap", "选项列间距", 0, 60), ("hardware_row_gap", "行间距", 0, 30),
+                ("hardware_columns", "选项列数", 1, 4),
             )),
             ("协议与模块", (
                 ("protocol_width", "协议宽度", 220, 1000), ("protocol_height", "协议高度", 60, 300),
@@ -669,6 +677,7 @@ class App:
         panels.rowconfigure(1, weight=0)
 
         left_column = ttk.Frame(panels, style="App.TFrame")
+        self.left_column = left_column
         left_column.grid(
             row=0, column=0, sticky="nsew",
             padx=(0, self.layout_vars["column_gap"].get())
@@ -740,6 +749,7 @@ class App:
         self.target_widgets.extend((brand_label, self.brand_combo, load_button, target_label, self.target_combo, type_label, type_combo, mode_label, mode_combo, dir_label, dir_entry, default_button, lang_label, lang_combo))
 
         right_column = ttk.Frame(panels, style="App.TFrame")
+        self.right_column = right_column
         right_column.grid(
             row=0, column=1, sticky="nsew",
             padx=(self.layout_vars["column_gap"].get(), 0)
@@ -763,69 +773,12 @@ class App:
                 style="Panel.TCheckbutton"
             ).grid(row=index // 4 + 1, column=index % 4, sticky="w", padx=(0, 6), pady=2)
 
-        hardware_panel, hardware = self._make_rounded_panel(
-            panels, "硬件配置", 174
-        )
-        self.hardware_panel = hardware_panel
-        self.hardware_frame = hardware
-        self.hardware_labels: list[ttk.Label] = []
-        self.hardware_combos: list[ttk.Combobox] = []
-        hardware_panel.grid(
-            row=1, column=0, sticky="w",
-            padx=(0, self.layout_vars["column_gap"].get()), pady=(8, 0)
-        )
-        hardware.columnconfigure(1, weight=1)
-        ttk.Label(hardware, text="硬件配置", style="PanelTitle.TLabel").grid(
-            row=0, column=0, columnspan=2, sticky="w", pady=(0, 5)
-        )
-        for index, (option, label) in enumerate(HARDWARE_BOOLEAN_OPTIONS):
-            label_widget = ttk.Label(hardware, text=label)
-            label_widget.grid(
-                row=index + 1, column=0, sticky="w",
-                padx=(0, self.layout_vars["hardware_label_gap"].get()),
-                pady=self.layout_vars["hardware_row_gap"].get(),
-            )
-            combo = ttk.Combobox(
-                hardware, textvariable=self.hardware_vars[option],
-                values=tuple(HARDWARE_CHOICES), state="readonly",
-                width=self.layout_vars["hardware_combo_width"].get()
-            )
-            combo.grid(
-                row=index + 1, column=1, sticky="ew",
-                pady=self.layout_vars["hardware_row_gap"].get(),
-            )
-            self.hardware_labels.append(label_widget)
-            self.hardware_combos.append(combo)
-        stick_label = ttk.Label(hardware, text="摇杆类型")
-        stick_label.grid(
-            row=len(HARDWARE_BOOLEAN_OPTIONS) + 1, column=0, sticky="w",
-            padx=(0, self.layout_vars["hardware_label_gap"].get()),
-            pady=self.layout_vars["hardware_row_gap"].get(),
-        )
-        stick_combo = ttk.Combobox(
-            hardware, textvariable=self.sticks_type,
-            values=("自动", "STANDARD", "HORUS"), state="readonly",
-            width=self.layout_vars["hardware_combo_width"].get()
-        )
-        stick_combo.grid(
-            row=len(HARDWARE_BOOLEAN_OPTIONS) + 1, column=1, sticky="ew",
-            pady=self.layout_vars["hardware_row_gap"].get(),
-        )
-        self.hardware_labels.append(stick_label)
-        self.hardware_combos.append(stick_combo)
-
-        support_column = ttk.Frame(panels, style="App.TFrame")
-        support_column.grid(
-            row=1, column=1, sticky="nsew",
-            padx=(self.layout_vars["column_gap"].get(), 0), pady=(8, 0)
-        )
-        support_column.columnconfigure(0, weight=1)
         protocol_panel, protocols = self._make_rounded_panel(
-            support_column, "协议支持", 82
+            right_column, "协议支持", self.layout_vars["protocol_height"].get()
         )
         self.protocol_panel = protocol_panel
         self.protocol_frame = protocols
-        protocol_panel.grid(row=0, column=0, sticky="w")
+        protocol_panel.grid(row=1, column=0, sticky="w", pady=(8, 0))
         ttk.Label(protocols, text="协议支持", style="PanelTitle.TLabel").grid(
             row=0, column=0, columnspan=4, sticky="w", pady=(0, 3)
         )
@@ -843,12 +796,12 @@ class App:
             )
             self.protocol_widgets[option] = widget
         modules_panel, modules = self._make_rounded_panel(
-            support_column, "模块支持", 112
+            right_column, "模块支持", self.layout_vars["module_height"].get()
         )
         self.modules_panel = modules_panel
         self.modules_frame = modules
         modules_panel.grid(
-            row=1, column=0, sticky="w",
+            row=2, column=0, sticky="w",
             pady=(self.layout_vars["support_gap"].get(), 0)
         )
         ttk.Label(modules, text="模块支持", style="PanelTitle.TLabel").grid(
@@ -867,14 +820,48 @@ class App:
                 pady=self.layout_vars["support_row_gap"].get(),
             )
             self.module_widgets[option] = widget
-        row += 1
 
-        self.hardware_warning_label = ttk.Label(
-            outer, textvariable=self.hardware_warning, foreground="#b45309",
-            wraplength=820, justify="left"
+        hardware_panel, hardware = self._make_rounded_panel(
+            panels, "硬件配置", self.layout_vars["hardware_height"].get()
         )
-        self.hardware_warning_label.grid(
-            row=row, column=0, columnspan=3, sticky="w", pady=(0, 4)
+        self.hardware_panel = hardware_panel
+        self.hardware_frame = hardware
+        self.hardware_option_frames: list[ttk.Frame] = []
+        hardware_panel.grid(row=1, column=0, columnspan=2, sticky="w", pady=(8, 0))
+        ttk.Label(hardware, text="硬件配置", style="PanelTitle.TLabel").grid(
+            row=0, column=0, columnspan=4, sticky="w", pady=(0, 5)
+        )
+        for option, label in HARDWARE_BOOLEAN_OPTIONS:
+            frame = ttk.Frame(hardware, style="Panel.TFrame")
+            frame.columnconfigure(0, minsize=52)
+            ttk.Label(frame, text=label, style="Panel.TLabel", width=12).grid(
+                row=0, column=0, sticky="w"
+            )
+            for column, text in enumerate(HARDWARE_CHOICES, start=1):
+                ttk.Radiobutton(
+                    frame, text=text, value=text, variable=self.hardware_vars[option],
+                    style="Panel.TRadiobutton",
+                ).grid(row=0, column=column, sticky="w", padx=(0, 5))
+            self.hardware_option_frames.append(frame)
+        sticks_frame = ttk.Frame(hardware, style="Panel.TFrame")
+        sticks_frame.columnconfigure(0, minsize=52)
+        ttk.Label(sticks_frame, text="摇杆类型", style="Panel.TLabel", width=12).grid(
+            row=0, column=0, sticky="w"
+        )
+        for column, text in enumerate(("默认", "STANDARD", "HORUS"), start=1):
+            ttk.Radiobutton(
+                sticks_frame, text=text, value=text, variable=self.sticks_type,
+                style="Panel.TRadiobutton",
+            ).grid(row=0, column=column, sticky="w", padx=(0, 5))
+        self.hardware_option_frames.append(sticks_frame)
+        self.hardware_warning_label = ttk.Label(
+            hardware, textvariable=self.hardware_warning, foreground="#b45309",
+            background="#ffffff", justify="left", wraplength=900,
+        )
+        self._regrid_hardware_widgets(
+            self.layout_vars["hardware_columns"].get(),
+            self.layout_vars["hardware_label_gap"].get(),
+            self.layout_vars["hardware_row_gap"].get(),
         )
         for option, _ in HARDWARE_BOOLEAN_OPTIONS:
             self.hardware_vars[option].trace_add(
@@ -1045,8 +1032,8 @@ class App:
             return ""
 
     def _update_hardware_warning(self):
-        gimbal = self.hardware_vars["FLYSKY_GIMBAL"].get() == "启用"
-        bluetooth = self.hardware_vars["BLUETOOTH"].get() == "启用"
+        gimbal = self.hardware_vars["FLYSKY_GIMBAL"].get() == "开启"
+        bluetooth = self.hardware_vars["BLUETOOTH"].get() == "开启"
         if not (gimbal and bluetooth):
             self.hardware_warning.set("")
             self.hardware_warning_label.grid_remove()
@@ -1054,12 +1041,12 @@ class App:
         text = self._target_cmake_text()
         if "share same UART" in text:
             self.hardware_warning.set(
-                "冲突：当前型号的蓝牙模块和串口/霍尔摇杆共用同一个 UART，"
-                "EdgeTX 会自动关闭串口/霍尔摇杆。请只启用其中一个。"
+                "冲突：当前型号的蓝牙模块和 FS 霍尔摇杆共用同一个 UART，"
+                "EdgeTX 会自动关闭 FS 霍尔摇杆。请只启用其中一个。"
             )
         else:
             self.hardware_warning.set(
-                "提示：串口/霍尔摇杆与蓝牙同时启用，请确认当前硬件有独立串口；"
+                "提示：FS 霍尔摇杆与蓝牙同时启用，请确认当前硬件有独立串口；"
                 "部分型号会由目标 CMake 自动关闭其中一项。"
             )
         self.hardware_warning_label.grid()
@@ -1238,7 +1225,7 @@ class App:
             value = HARDWARE_CHOICES[self.hardware_vars[option].get()]
             if value is not None:
                 options[option] = value
-        if self.sticks_type.get() != "自动":
+        if self.sticks_type.get() != "默认":
             options["STICKS"] = self.sticks_type.get()
         args += [f"-D{key}={value}" for key, value in options.items()]
         args += [f"-DTRANSLATIONS={self.translation.get().strip() or 'EN'}",
@@ -1247,12 +1234,12 @@ class App:
         return build, args
 
     def configure(self):
-        gimbal = self.hardware_vars["FLYSKY_GIMBAL"].get() == "启用"
-        bluetooth = self.hardware_vars["BLUETOOTH"].get() == "启用"
+        gimbal = self.hardware_vars["FLYSKY_GIMBAL"].get() == "开启"
+        bluetooth = self.hardware_vars["BLUETOOTH"].get() == "开启"
         if gimbal and bluetooth and "share same UART" in self._target_cmake_text():
             messagebox.showwarning(
                 "硬件配置冲突",
-                "当前型号的蓝牙模块和串口/霍尔摇杆共用同一个 UART，"
+                "当前型号的蓝牙模块和 FS 霍尔摇杆共用同一个 UART，"
                 "不能同时启用。请返回硬件配置后只选择其中一个。"
             )
             return
