@@ -1,0 +1,46 @@
+{
+	"folders": [
+		{
+			"path": "."
+		}
+	],
+	"settings": {
+		"files.associations": {
+			"*.scf": "s",
+			".gitignore": "bat",
+			"*.json": "json",
+			"*.txt": "bibtex",
+			"*.sct": "arm",
+			"string.h": "c",
+			"brush_motor_app.h": "c",
+			"systemapp.h": "c",
+			"debug_com_list.cc": "c",
+			"uart_debug.h": "c",
+			"qthezg.h": "c",
+			"debug_func_table.h": "c",
+			"stdint.h": "c",
+			"key_app.h": "c",
+			"rgb_hardware.h": "c",
+			"stdlib.h": "c",
+			"iic1_api.h": "c",
+			"pwm.cc": "c",
+			"rgb_led.h": "c",
+			"nds03_calib.h": "c",
+			"ua_debug.h": "c",
+			"ibxx_app.h": "c",
+			"uart6.cc": "c",
+			"stdio.h": "c",
+			"ultrasonic_hardware.h": "c",
+			"dds.h": "c",
+			"main_app.h": "c",
+			"limits": "cpp",
+			"led_hardware.h": "c",
+			"gpio.h": "c",
+			"log.h": "c",
+			"gpio_bsp.h": "c",
+			"hareware_env.h": "c",
+			"time.h": "c",
+			"key_hardware.h": "c"
+		}
+	}
+}
