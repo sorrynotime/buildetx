@@ -130,60 +130,66 @@ class App:
         self.capabilities: set[str] = set()
         self.layout_vars: dict[str, tk.IntVar] = {
             "window_width": tk.IntVar(value=980),
-            "window_height": tk.IntVar(value=876),
+            "window_height": tk.IntVar(value=866),
             "outer_padding": tk.IntVar(value=10),
             "column_gap": tk.IntVar(value=5),
-            "left_weight": tk.IntVar(value=2),
-            "right_weight": tk.IntVar(value=4),
-            "panels_bottom_gap": tk.IntVar(value=4),
-            "target_width": tk.IntVar(value=320),
-            "target_height": tk.IntVar(value=208),
-            "target_x": tk.IntVar(value=0),
-            "target_y": tk.IntVar(value=0),
-            "target_pad_x": tk.IntVar(value=14),
-            "target_pad_y": tk.IntVar(value=10),
+            "left_weight": tk.IntVar(value=1),
+            "right_weight": tk.IntVar(value=8),
+            "panels_bottom_gap": tk.IntVar(value=8),
+            "target_width": tk.IntVar(value=410),
+            "target_height": tk.IntVar(value=236),
+            "target_x": tk.IntVar(value=1),
+            "target_y": tk.IntVar(value=1),
+            "target_pad_x": tk.IntVar(value=1),
+            "target_pad_y": tk.IntVar(value=1),
+            "target_label_gap": tk.IntVar(value=1),
+            "target_column_gap": tk.IntVar(value=1),
+            "target_row_gap": tk.IntVar(value=3),
+            "target_control_width": tk.IntVar(value=8),
+            "target_combo_gap": tk.IntVar(value=6),
+            "target_button_height": tk.IntVar(value=2),
             "feature_width": tk.IntVar(value=620),
-            "feature_height": tk.IntVar(value=208),
-            "feature_x": tk.IntVar(value=0),
-            "feature_y": tk.IntVar(value=0),
-            "feature_pad_x": tk.IntVar(value=14),
-            "feature_pad_y": tk.IntVar(value=10),
-            "hardware_width": tk.IntVar(value=260),
+            "feature_height": tk.IntVar(value=236),
+            "feature_x": tk.IntVar(value=1),
+            "feature_y": tk.IntVar(value=1),
+            "feature_pad_x": tk.IntVar(value=1),
+            "feature_pad_y": tk.IntVar(value=1),
+            "hardware_width": tk.IntVar(value=410),
             "hardware_height": tk.IntVar(value=200),
-            "hardware_x": tk.IntVar(value=0),
-            "hardware_y": tk.IntVar(value=0),
-            "hardware_pad_x": tk.IntVar(value=25),
+            "hardware_x": tk.IntVar(value=1),
+            "hardware_y": tk.IntVar(value=1),
+            "hardware_pad_x": tk.IntVar(value=1),
             "hardware_pad_y": tk.IntVar(value=1),
-            "hardware_label_gap": tk.IntVar(value=30),
+            "hardware_label_gap": tk.IntVar(value=25),
             "hardware_row_gap": tk.IntVar(value=1),
             "hardware_combo_width": tk.IntVar(value=5),
             "protocol_width": tk.IntVar(value=620),
-            "protocol_height": tk.IntVar(value=82),
-            "protocol_x": tk.IntVar(value=0),
-            "protocol_y": tk.IntVar(value=0),
+            "protocol_height": tk.IntVar(value=92),
+            "protocol_x": tk.IntVar(value=1),
+            "protocol_y": tk.IntVar(value=1),
             "module_width": tk.IntVar(value=620),
-            "module_height": tk.IntVar(value=112),
-            "module_x": tk.IntVar(value=0),
-            "module_y": tk.IntVar(value=0),
-            "support_gap": tk.IntVar(value=12),
-            "support_pad_x": tk.IntVar(value=24),
-            "support_pad_y": tk.IntVar(value=5),
-            "support_columns": tk.IntVar(value=4),
-            "support_item_gap": tk.IntVar(value=8),
+            "module_height": tk.IntVar(value=100),
+            "module_x": tk.IntVar(value=1),
+            "module_y": tk.IntVar(value=1),
+            "support_gap": tk.IntVar(value=7),
+            "support_pad_x": tk.IntVar(value=1),
+            "support_pad_y": tk.IntVar(value=1),
+            "support_columns": tk.IntVar(value=5),
+            "support_item_gap": tk.IntVar(value=1),
             "support_row_gap": tk.IntVar(value=1),
             "button_config_gap": tk.IntVar(value=2),
-            "panels_bottom_gap": tk.IntVar(value=4),
-            "button_row_pady": tk.IntVar(value=10),
-            "button_item_padx": tk.IntVar(value=11),
-            "build_width": tk.IntVar(value=940),
-            "build_height": tk.IntVar(value=330),
-            "build_x": tk.IntVar(value=0),
-            "build_y": tk.IntVar(value=0),
-            "build_pad_x": tk.IntVar(value=14),
-            "build_pad_y": tk.IntVar(value=10),
-            "log_height": tk.IntVar(value=15),
-            "log_pad_x": tk.IntVar(value=16),
-            "log_pad_y": tk.IntVar(value=13),
+            "panels_bottom_gap": tk.IntVar(value=8),
+            "button_row_pady": tk.IntVar(value=2),
+            "button_item_padx": tk.IntVar(value=3),
+            "build_width": tk.IntVar(value=960),
+            "build_height": tk.IntVar(value=306),
+            "build_x": tk.IntVar(value=1),
+            "build_y": tk.IntVar(value=1),
+            "build_pad_x": tk.IntVar(value=1),
+            "build_pad_y": tk.IntVar(value=1),
+            "log_height": tk.IntVar(value=12),
+            "log_pad_x": tk.IntVar(value=1),
+            "log_pad_y": tk.IntVar(value=1),
         }
         self.layout_debug_window: tk.Toplevel | None = None
 
@@ -330,6 +336,15 @@ class App:
         self.target_frame.configure(
             padx=values["target_pad_x"], pady=values["target_pad_y"]
         )
+        self.target_frame.grid_columnconfigure(2, minsize=values["target_column_gap"])
+        for widget in self.target_widgets:
+            widget.grid_configure(pady=values["target_row_gap"])
+        for widget in self.target_labels:
+            widget.grid_configure(padx=(0, values["target_label_gap"]))
+        for widget in self.target_combos:
+            widget.configure(width=values["target_control_width"])
+            widget.grid_configure(padx=(values["target_combo_gap"], 0))
+        self.target_load_button.configure(padding=(8, values["target_button_height"]))
         self.feature_panel.configure(
             width=values["feature_width"], height=values["feature_height"]
         )
@@ -455,59 +470,65 @@ class App:
     def _reset_layout_params(self):
         defaults = {
             "window_width": 980,
-            "window_height": 876,
+            "window_height": 866,
             "outer_padding": 10,
             "column_gap": 5,
-            "left_weight": 2,
-            "right_weight": 4,
-            "panels_bottom_gap": 4,
-            "target_width": 320,
-            "target_height": 208,
-            "target_x": 0,
-            "target_y": 0,
-            "target_pad_x": 14,
-            "target_pad_y": 10,
+            "left_weight": 1,
+            "right_weight": 8,
+            "panels_bottom_gap": 8,
+            "target_width": 410,
+            "target_height": 236,
+            "target_x": 1,
+            "target_y": 1,
+            "target_pad_x": 1,
+            "target_pad_y": 1,
+            "target_label_gap": 1,
+            "target_column_gap": 1,
+            "target_row_gap": 3,
+            "target_control_width": 8,
+            "target_combo_gap": 6,
+            "target_button_height": 2,
             "feature_width": 620,
-            "feature_height": 208,
-            "feature_x": 0,
-            "feature_y": 0,
-            "feature_pad_x": 14,
-            "feature_pad_y": 10,
-            "hardware_width": 260,
+            "feature_height": 236,
+            "feature_x": 1,
+            "feature_y": 1,
+            "feature_pad_x": 1,
+            "feature_pad_y": 1,
+            "hardware_width": 410,
             "hardware_height": 200,
-            "hardware_x": 0,
-            "hardware_y": 0,
-            "hardware_pad_x": 25,
+            "hardware_x": 1,
+            "hardware_y": 1,
+            "hardware_pad_x": 1,
             "hardware_pad_y": 1,
-            "hardware_label_gap": 30,
+            "hardware_label_gap": 25,
             "hardware_row_gap": 1,
             "hardware_combo_width": 5,
             "protocol_width": 620,
-            "protocol_height": 82,
-            "protocol_x": 0,
-            "protocol_y": 0,
+            "protocol_height": 92,
+            "protocol_x": 1,
+            "protocol_y": 1,
             "module_width": 620,
-            "module_height": 112,
-            "module_x": 0,
-            "module_y": 0,
-            "support_gap": 12,
-            "support_pad_x": 24,
-            "support_pad_y": 5,
-            "support_columns": 4,
-            "support_item_gap": 8,
+            "module_height": 100,
+            "module_x": 1,
+            "module_y": 1,
+            "support_gap": 7,
+            "support_pad_x": 1,
+            "support_pad_y": 1,
+            "support_columns": 5,
+            "support_item_gap": 1,
             "support_row_gap": 1,
             "button_config_gap": 2,
-            "button_row_pady": 10,
-            "button_item_padx": 11,
-            "build_width": 940,
-            "build_height": 330,
-            "build_x": 0,
-            "build_y": 0,
-            "build_pad_x": 14,
-            "build_pad_y": 10,
-            "log_height": 15,
-            "log_pad_x": 16,
-            "log_pad_y": 13,
+            "button_row_pady": 2,
+            "button_item_padx": 3,
+            "build_width": 960,
+            "build_height": 306,
+            "build_x": 1,
+            "build_y": 1,
+            "build_pad_x": 1,
+            "build_pad_y": 1,
+            "log_height": 12,
+            "log_pad_x": 1,
+            "log_pad_y": 1,
         }
         for name, value in defaults.items():
             self.layout_vars[name].set(value)
@@ -538,6 +559,9 @@ class App:
                 ("target_width", "宽度", 180, 800), ("target_height", "高度", 120, 500),
                 ("target_x", "位置 X", 0, 200), ("target_y", "位置 Y", 0, 200),
                 ("target_pad_x", "横向内边距", 0, 50), ("target_pad_y", "纵向内边距", 0, 50),
+                ("target_label_gap", "标签间距", 0, 50), ("target_column_gap", "两列间距", 0, 80),
+                ("target_row_gap", "行间距", 0, 30), ("target_control_width", "控件宽度", 8, 30),
+                ("target_combo_gap", "下拉框间距", 0, 40), ("target_button_height", "获取按钮高度", 0, 12),
             )),
             ("常用功能", (
                 ("feature_width", "宽度", 220, 1000), ("feature_height", "高度", 100, 500),
@@ -656,61 +680,64 @@ class App:
         )
         self.target_panel = target_panel
         self.target_frame = target_inner
+        self.target_labels: list[ttk.Label] = []
+        self.target_combos: list[ttk.Combobox] = []
+        self.target_widgets: list[tk.Widget] = []
         target_panel.grid(row=0, column=0, sticky="w")
-        target_inner.columnconfigure(1, weight=1)
+        target_inner.columnconfigure((1, 3), weight=1)
         ttk.Label(target_inner, text="目标配置", style="PanelTitle.TLabel").grid(
-            row=0, column=0, columnspan=4, sticky="w", pady=(0, 7)
+            row=0, column=0, columnspan=3, sticky="w", pady=(0, 7)
         )
-        ttk.Label(target_inner, text="厂商", style="Panel.TLabel").grid(
-            row=1, column=0, sticky="w", pady=3
+        load_button = ttk.Button(
+            target_inner, text="获取发射机型号", command=self.load_targets,
+            style="Primary.TButton"
         )
+        load_button.grid(row=0, column=3, sticky="e", pady=(0, 3))
+        self.target_load_button = load_button
+        brand_label = ttk.Label(target_inner, text="厂商", style="Panel.TLabel")
+        brand_label.grid(row=1, column=0, sticky="w", pady=3)
         self.brand_combo = ttk.Combobox(
             target_inner, textvariable=self.brand, state="readonly", width=18
         )
-        self.brand_combo.grid(row=1, column=1, columnspan=2, sticky="w", padx=(10, 0), pady=3)
+        self.brand_combo.grid(row=1, column=1, sticky="ew", padx=(10, 0), pady=3)
         self.brand_combo.bind("<<ComboboxSelected>>", lambda _e: self._load_models())
-        ttk.Button(
-            target_inner, text="获取发射机型号", command=self.load_targets,
-            style="Primary.TButton"
-        ).grid(row=1, column=3, sticky="e", padx=(8, 0), pady=3)
-        ttk.Label(target_inner, text="型号", style="Panel.TLabel").grid(
-            row=2, column=0, sticky="w", pady=3
-        )
+        target_label = ttk.Label(target_inner, text="型号", style="Panel.TLabel")
+        target_label.grid(row=2, column=0, sticky="w", pady=3)
         self.target_combo = ttk.Combobox(
             target_inner, textvariable=self.target, state="readonly", width=18
         )
-        self.target_combo.grid(row=2, column=1, columnspan=3, sticky="w", padx=(10, 0), pady=3)
+        self.target_combo.grid(row=2, column=1, sticky="ew", padx=(10, 0), pady=3)
         self.target_combo.bind("<<ComboboxSelected>>", lambda _e: self._target_dir())
-        ttk.Label(target_inner, text="类型", style="Panel.TLabel").grid(
-            row=3, column=0, sticky="w", pady=3
-        )
-        ttk.Combobox(
+        type_label = ttk.Label(target_inner, text="类型", style="Panel.TLabel")
+        type_label.grid(row=3, column=0, sticky="w", pady=3)
+        type_combo = ttk.Combobox(
             target_inner, textvariable=self.build_type, values=("Release", "Debug"),
             state="readonly", width=12
-        ).grid(row=3, column=1, sticky="w", padx=(10, 18), pady=3)
-        ttk.Label(target_inner, text="摇杆模式", style="Panel.TLabel").grid(
-            row=3, column=2, sticky="w", pady=3
         )
-        ttk.Combobox(
+        type_combo.grid(row=3, column=1, sticky="ew", padx=(10, 0), pady=3)
+        mode_label = ttk.Label(target_inner, text="摇杆模式", style="Panel.TLabel")
+        mode_label.grid(row=4, column=0, sticky="w", pady=3)
+        mode_combo = ttk.Combobox(
             target_inner, textvariable=self.default_mode,
             values=("", "1", "2", "3", "4"), state="readonly", width=10
-        ).grid(row=3, column=3, sticky="w", padx=(8, 0), pady=3)
-        ttk.Label(target_inner, text="目录", style="Panel.TLabel").grid(
-            row=4, column=0, sticky="w", pady=3
         )
-        ttk.Entry(target_inner, textvariable=self.build_dir, width=34).grid(
-            row=4, column=1, columnspan=2, sticky="ew", padx=(10, 6), pady=3
-        )
-        ttk.Button(target_inner, text="默认", command=self._target_dir).grid(
-            row=4, column=3, sticky="w", pady=3
-        )
-        ttk.Label(target_inner, text="语言", style="Panel.TLabel").grid(
-            row=5, column=0, sticky="w", pady=3
-        )
-        ttk.Combobox(
+        mode_combo.grid(row=4, column=1, sticky="ew", pady=3)
+        dir_label = ttk.Label(target_inner, text="目录", style="Panel.TLabel")
+        dir_label.grid(row=6, column=0, sticky="w", pady=3)
+        dir_entry = ttk.Entry(target_inner, textvariable=self.build_dir, width=34)
+        dir_entry.grid(row=6, column=1, columnspan=2, sticky="ew", padx=(10, 6), pady=3)
+        default_button = ttk.Button(target_inner, text="默认", command=self._target_dir)
+        default_button.grid(row=6, column=3, sticky="ew", pady=3)
+        lang_label = ttk.Label(target_inner, text="语言", style="Panel.TLabel")
+        lang_label.grid(row=5, column=0, sticky="w", pady=3)
+        lang_combo = ttk.Combobox(
             target_inner, textvariable=self.translation, values=LANGUAGES,
             state="readonly", width=12
-        ).grid(row=5, column=1, sticky="w", padx=(10, 0), pady=3)
+        )
+        lang_combo.grid(row=5, column=1, sticky="ew", pady=3)
+        self.target_labels.extend((brand_label, target_label, type_label, mode_label, dir_label, lang_label))
+        self.target_combos.extend((self.brand_combo, self.target_combo, type_combo, mode_combo, lang_combo))
+        self.target_widgets.extend((brand_label, self.brand_combo, load_button, target_label, self.target_combo, type_label, type_combo, mode_label, mode_combo, dir_label, dir_entry, default_button, lang_label, lang_combo))
 
         right_column = ttk.Frame(panels, style="App.TFrame")
         right_column.grid(
