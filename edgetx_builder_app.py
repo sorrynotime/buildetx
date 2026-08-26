@@ -103,7 +103,7 @@ class App:
         self.target = tk.StringVar(value="")
         self.translation = tk.StringVar(value="CN")
         self.build_type = tk.StringVar(value="Release")
-        self.default_mode = tk.StringVar(value="")
+        self.default_mode = tk.StringVar(value="默认")
         self.build_dir = tk.StringVar(value="")
         self.status = tk.StringVar(value="请选择 EdgeTX 源码目录，然后点击检查环境")
         self.feature_vars = {
@@ -219,18 +219,29 @@ class App:
         style.configure("PanelTitle.TLabel", background="#ffffff", foreground="#102a43",
                         font=("Segoe UI Semibold", 10))
         style.configure(
-            "TButton", padding=(12, 6), font=("Segoe UI", 9),
-            background="#dbeafe", foreground="#1e3a5f",
-            bordercolor="#9bb7d4", lightcolor="#ffffff", darkcolor="#9bb7d4",
+            "TButton", padding=(15, 7), font=("Segoe UI Semibold", 9),
+            background="#f8fbff", foreground="#27415d", borderwidth=1,
+            bordercolor="#b8cce0", lightcolor="#ffffff", darkcolor="#b8cce0",
+            relief="flat", focuscolor="#93c5fd",
         )
         style.map(
             "TButton",
-            background=[("active", "#bfdbfe"), ("pressed", "#93c5fd")],
-            foreground=[("disabled", "#8a9aab")],
+            background=[("active", "#e6f1ff"), ("pressed", "#cfe4fb")],
+            bordercolor=[("active", "#78aee8"), ("pressed", "#5e9cdd")],
+            foreground=[("disabled", "#8a9aab"), ("pressed", "#1e3a5f")],
         )
-        style.configure("Primary.TButton", padding=(14, 7), foreground="#ffffff",
-                        background="#2563eb", font=("Segoe UI Semibold", 9))
-        style.map("Primary.TButton", background=[("active", "#1d4ed8")])
+        style.configure(
+            "Primary.TButton", padding=(17, 8), foreground="#ffffff",
+            background="#3478d4", borderwidth=1, bordercolor="#2865b8",
+            lightcolor="#4f91e7", darkcolor="#2865b8", relief="flat",
+            font=("Segoe UI Semibold", 9), focuscolor="#93c5fd",
+        )
+        style.map(
+            "Primary.TButton",
+            background=[("active", "#286cc5"), ("pressed", "#205ca9")],
+            bordercolor=[("active", "#205ca9"), ("pressed", "#184b8d")],
+            foreground=[("disabled", "#d6e6fa")],
+        )
         style.configure("TCheckbutton", background="#ffffff", foreground="#243247",
                         font=("Segoe UI", 9))
         style.configure("Panel.TCheckbutton", background="#ffffff",
@@ -741,11 +752,11 @@ class App:
             state="readonly", width=12
         )
         type_combo.grid(row=3, column=1, columnspan=3, sticky="ew", padx=(10, 0), pady=3)
-        mode_label = ttk.Label(target_inner, text="摇杆模式", style="Panel.TLabel")
+        mode_label = ttk.Label(target_inner, text="手型设置", style="Panel.TLabel")
         mode_label.grid(row=4, column=0, sticky="w", pady=3)
         mode_combo = ttk.Combobox(
             target_inner, textvariable=self.default_mode,
-            values=("", "1", "2", "3", "4"), state="readonly", width=10
+            values=("默认", "1", "2", "3", "4"), state="readonly", width=10
         )
         mode_combo.grid(row=4, column=1, columnspan=3, sticky="ew", padx=(10, 0), pady=3)
         dir_label = ttk.Label(target_inner, text="目录", style="Panel.TLabel")
@@ -1234,7 +1245,7 @@ class App:
         options = {key: value for key, value in config.items() if not key.startswith("_")}
         for option, _, _ in COMMON_FEATURES:
             options[option] = "YES" if self.feature_vars[option].get() else "NO"
-        if self.default_mode.get():
+        if self.default_mode.get() != "默认":
             options["DEFAULT_MODE"] = self.default_mode.get()
         for option, _ in PROTOCOL_OPTIONS:
             if option in self.capabilities:
