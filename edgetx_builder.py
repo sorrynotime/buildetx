@@ -5,207 +5,37 @@ Single-file application for configuring and building EdgeTX targets.
 
 from __future__ import annotations
 
-import ast
 import json
-import os
 import queue
 import re
 import shutil
-import subprocess
-import sys
 import threading
 import tkinter as tk
 from pathlib import Path
 from tkinter import filedialog, messagebox, ttk
 
-
-# Source inspection and process helpers.
-def clang_version(bin_dir: Path) -> int | None:
-    clang = bin_dir / "clang.exe"
-    if not clang.is_file():
-        return None
-    code, output = run_capture([str(clang), "--version"])
-    match = re.search(r"clang version (\d+)", output, re.IGNORECASE)
-    return int(match.group(1)) if code == 0 and match else None
-
-
-def find_compatible_libclang() -> tuple[Path | None, int | None]:
-    program_files = Path(os.environ.get("ProgramFiles", r"C:\Program Files"))
-    candidates = []
-    vswhere_paths = (
-        Path(os.environ.get("ProgramFiles(x86)", r"C:\Program Files (x86)"))
-        / "Microsoft Visual Studio" / "Installer" / "vswhere.exe",
-        program_files / "Microsoft Visual Studio" / "Installer" / "vswhere.exe",
-    )
-    for vswhere in vswhere_paths:
-        if not vswhere.is_file():
-            continue
-        code, output = run_capture([str(vswhere), "-products", "*", "-property", "installationPath"])
-        if code == 0:
-            candidates.extend(Path(line.strip()) / "VC" / "Tools" / "Llvm" / "x64" / "bin"
-                              for line in output.splitlines() if line.strip())
-        break
-    vs_install = os.environ.get("VSINSTALLDIR")
-    if vs_install:
-        candidates.append(Path(vs_install) / "VC" / "Tools" / "Llvm" / "x64" / "bin")
-    root = program_files / "Microsoft Visual Studio"
-    if root.is_dir():
-        candidates.extend(root.glob("*/*/VC/Tools/Llvm/x64/bin"))
-    compatible = []
-    for candidate in candidates:
-        if not (candidate / "libclang.dll").is_file():
-            continue
-        version = clang_version(candidate)
-        if version is not None and version >= 20:
-            compatible.append((version, candidate))
-    return max(compatible, key=lambda item: item[0])[::-1] if compatible else (None, None)
-
-
-def path_libclang() -> tuple[Path | None, int | None]:
-    for entry in os.environ.get("PATH", "").split(os.pathsep):
-        path = Path(entry)
-        if (path / "libclang.dll").is_file():
-            return path, clang_version(path)
-    return None, None
-
-
-def read_cmake_options(source: Path, target: str) -> dict[str, str]:
-    paths = [source / "radio" / "src" / "CMakeLists.txt",
-             source / "radio" / "src" / "targets" / "common" / "arm" / "CMakeLists.txt",
-             source / "radio" / "src" / "targets" / target / "CMakeLists.txt"]
-    defaults: dict[str, str] = {}
-    for path in paths:
-        if not path.is_file():
-            continue
-        try:
-            for line in path.read_text(encoding="utf-8").splitlines():
-                if line.lstrip().startswith("#"):
-                    continue
-                code_line = line.split(" #", 1)[0]
-                option = re.search(r"\boption\((\w+)\s+.*\s+(ON|OFF)\)\s*$", code_line, re.I)
-                assignment = re.search(r'\bset\((\w+)\s+"?([A-Za-z0-9_+-]+)', code_line, re.I)
-                match = option or assignment
-                if match:
-                    key, value = match.group(1).upper(), match.group(2).upper()
-                    defaults[key] = {"YES": "ON", "NO": "OFF"}.get(value, value)
-        except OSError:
-            pass
-    return defaults
-
-
-def read_target_defaults(source: Path, target: str) -> dict[str, str]:
-    options = read_cmake_options(source, target)
-    return {key: options[key] for key in ("FLYSKY_GIMBAL", "BLUETOOTH", "INTERNAL_GPS", "STICK_DEAD_ZONE", "STICKS") if key in options}
-
-
-def read_target_capabilities(source: Path, target: str) -> set[str]:
-    return set(read_cmake_options(source, target))
-
-
-def _decode(raw: bytes) -> str:
-    text = raw.decode("utf-8", errors="replace")
-    return raw.decode("gb18030", errors="replace") if "�" in text else text
-
-
-def _subprocess_creationflags() -> int:
-    if sys.platform == "win32":
-        return getattr(subprocess, "CREATE_NO_WINDOW", 0)
-    return 0
-
-
-def run_capture(args: list[str], cwd: Path | None = None, on_line=None) -> tuple[int, str]:
-    try:
-        creationflags = _subprocess_creationflags()
-        if on_line is None:
-            p = subprocess.run(
-                args, cwd=cwd, stdout=subprocess.PIPE,
-                stderr=subprocess.STDOUT, creationflags=creationflags,
-            )
-            return p.returncode, _decode(p.stdout or b"").strip()
-        p = subprocess.Popen(
-            args, cwd=cwd, stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT, creationflags=creationflags,
-        )
-        lines = []
-        assert p.stdout is not None
-        for raw_line in iter(p.stdout.readline, b""):
-            line = _decode(raw_line).rstrip("\r\n")
-            lines.append(line)
-            on_line(line)
-        p.wait()
-        return p.returncode, "\n".join(lines).strip()
-    except OSError as exc:
-        return 1, str(exc)
-
-
-def read_literal_boards(path: Path) -> dict[str, dict[str, str]]:
-    if not path.is_file():
-        return {}
-    try:
-        tree = ast.parse(path.read_text(encoding="utf-8"))
-        for node in tree.body:
-            if isinstance(node, ast.Assign) and any(isinstance(t, ast.Name) and t.id == "boards" for t in node.targets):
-                value = ast.literal_eval(node.value)
-                return {str(k): {str(a): str(b) for a, b in v.items()} for k, v in value.items()}
-    except (OSError, SyntaxError, ValueError):
-        pass
-    return {}
-
-
-def read_common_targets(source: Path) -> dict[str, dict[str, str]]:
-    path = source / "tools" / "build-common.sh"
-    if not path.is_file():
-        return {}
-    targets, target = {}, ""
-    try:
-        for line in path.read_text(encoding="utf-8").splitlines():
-            match = re.match(r"^\s*([a-z0-9+_-]+)\)\s*$", line)
-            if match:
-                target = match.group(1)
-                continue
-            options = re.search(r'BUILD_OPTIONS\+="([^"]+)"', line)
-            if target and options:
-                config = dict(re.findall(r"-D([^=\s]+)=([^\s]+)", options.group(1)))
-                if config:
-                    targets[target] = config
-    except OSError:
-        pass
-    return targets
-
-
-def read_target_catalog(source: Path) -> dict[str, dict[str, dict[str, str]]]:
-    targets = read_common_targets(source) or {name.lower(): config for name, config in read_literal_boards(source / "tools" / "boards.py").items()}
-    labels: dict[str, str] = {}
-    try:
-        data = json.loads((source / "fw.json").read_text(encoding="utf-8"))
-        for label, prefix in data.get("targets", []):
-            labels[str(prefix).rstrip("-")] = str(label)
-    except (OSError, ValueError, TypeError):
-        pass
-    brands = {"x9lite":"FrSky", "x9lites":"FrSky", "x7":"FrSky", "x7access":"FrSky", "xlite":"FrSky", "xlites":"FrSky", "x9d":"FrSky", "x9dp":"FrSky", "x9dp2019":"FrSky", "x9e":"FrSky", "x9e-hall":"FrSky", "x10":"FrSky", "x10express":"FrSky", "x12s":"FrSky", "t12":"Jumper", "tlite":"Jumper", "tpro":"Jumper", "tprov2":"Jumper", "t12max":"Jumper", "t14":"Jumper", "t16":"Jumper", "t18":"Jumper", "tpros":"Jumper", "bumblebee":"Jumper", "t8":"RadioMaster", "tx12":"RadioMaster", "tx12mk2":"RadioMaster", "zorro":"RadioMaster", "boxer":"RadioMaster", "pocket":"RadioMaster", "mt12":"RadioMaster", "gx12":"RadioMaster", "lr3pro":"BetaFPV", "commando8":"iFlight"}
-    catalog: dict[str, dict[str, dict[str, str]]] = {}
-    for target, config in targets.items():
-        label = labels.get(target, target.upper())
-        brand = {"Flysky": "FlySky"}.get(label.split(maxsplit=1)[0], label.split(maxsplit=1)[0])
-        if brand not in {"FrSky", "Jumper", "RadioMaster", "FlySky", "iFlight", "BetaFPV", "HelloRadioSky", "Fatfish"}:
-            brand = brands.get(target, "其他")
-        catalog.setdefault(brand, {})[label] = {"_target": target, **config}
-    return catalog
+import elrs_backend
+from builder_utils import external_python, resource_path, run_capture
+from edgetx_backend import (
+    MISSING_TOOL_HELP,
+    PYTHON_PACKAGE_ALIASES,
+    REQUIRED_IMPORTS,
+    TOOLS,
+    find_compatible_libclang,
+    path_libclang,
+    read_cmake_options,
+    read_target_catalog,
+    read_target_capabilities,
+    read_target_defaults,
+)
 
 
 # GUI application.
 
-TOOLS = ("cmake", "ninja", "arm-none-eabi-gcc", "python", "git")
-REQUIRED_IMPORTS = {
-    "PIL": "Pillow",
-    "lz4.block": "lz4",
-    "elftools": "pyelftools",
-}
-PYTHON_PACKAGE_ALIASES = {
-    module.split(".", 1)[0]: package
-    for module, package in REQUIRED_IMPORTS.items()
-}
 DEFAULT_SOURCE = r"E:\Code\edgetx"
+DEFAULT_WINDOW_WIDTH = 980
+DEFAULT_WINDOW_HEIGHT = 900
+ELRS_MANUAL_MODE = "（手动选择目标）"
 DEFAULT_VS_SHELL = r"C:\ProgramData\Microsoft\Windows\Start Menu\Programs\Visual Studio\Visual Studio Tools\Developer PowerShell for VS.lnk"
 APP_NAME = "EdgeTX Builder"
 APP_VERSION = "1.0"
@@ -253,32 +83,12 @@ HARDWARE_CHOICES = {
     "开启": "YES",
     "关闭": "NO",
 }
-MISSING_TOOL_HELP = {
-    "cmake": "请安装 CMake，并将其 bin 目录添加到 PATH 后重启本程序。",
-    "ninja": "请安装 Ninja，或将 ninja.exe 所在目录添加到 PATH 后重启本程序。",
-    "arm-none-eabi-gcc": (
-        "请安装 ARM GNU Toolchain，并将其 bin 目录添加到 PATH 后重启本程序。"
-    ),
-    "python": "请安装 Python，并勾选安装程序中的 Add Python to PATH 后重启本程序。",
-    "git": "请安装 Git，或将 Git 的 cmd 目录添加到 PATH 后重启本程序。",
-}
-
-
-def external_python() -> str | None:
-    return shutil.which("python")
-
-
-def resource_path(name: str) -> Path:
-    base = Path(getattr(sys, "_MEIPASS", Path(__file__).resolve().parent))
-    return base / name
-
-
 class App:
     def __init__(self, root: tk.Tk):
         self.root = root
         self.root.title("EdgeTX Builder - Windows")
         self._set_window_icon()
-        self.root.geometry("980x856")
+        self.root.geometry(f"{DEFAULT_WINDOW_WIDTH}x{DEFAULT_WINDOW_HEIGHT}")
         self.root.resizable(False, False)
         self.events: queue.Queue[tuple[str, str]] = queue.Queue()
         self.busy = False
@@ -294,6 +104,19 @@ class App:
         self.default_mode = tk.StringVar(value="默认")
         self.build_dir = tk.StringVar(value="")
         self.status = tk.StringVar(value="请选择 EdgeTX 源码目录，然后点击检查环境")
+        self.system = tk.StringVar(value="edgetx")
+        self.elrs_source = tk.StringVar(value=elrs_backend.DEFAULT_SOURCE)
+        self.elrs_kind = tk.StringVar(value="TX")
+        self.elrs_env = tk.StringVar(value="")
+        self.elrs_envs: dict[str, list[str]] = {}
+        self.elrs_domain = tk.StringVar(value="默认")
+        self.elrs_binding = tk.StringVar(value="")
+        self.elrs_lock = tk.BooleanVar(value=False)
+        self.elrs_defines_loaded = False
+        self.elrs_vendor = tk.StringVar(value=ELRS_MANUAL_MODE)
+        self.elrs_product = tk.StringVar(value="")
+        self.elrs_layout = tk.StringVar(value="")
+        self.elrs_hardware: dict[str, dict[str, dict]] = {}
         self.feature_vars = {
             option: tk.BooleanVar(value=default)
             for option, _, default in COMMON_FEATURES
@@ -317,8 +140,8 @@ class App:
         self.module_widgets: dict[str, ttk.Checkbutton] = {}
         self.capabilities: set[str] = set()
         self.layout_vars: dict[str, tk.IntVar] = {
-            "window_width": tk.IntVar(value=980),
-            "window_height": tk.IntVar(value=856),
+            "window_width": tk.IntVar(value=DEFAULT_WINDOW_WIDTH),
+            "window_height": tk.IntVar(value=DEFAULT_WINDOW_HEIGHT),
             "outer_padding": tk.IntVar(value=10),
             "column_gap": tk.IntVar(value=5),
             "left_weight": tk.IntVar(value=1),
@@ -573,7 +396,9 @@ class App:
             for name, variable in self.layout_vars.items()
             if name != "window_width" and name != "window_height"
         }
-        self.root.geometry("980x856")
+        width = self._layout_value("window_width", DEFAULT_WINDOW_WIDTH)
+        height = self._layout_value("window_height", DEFAULT_WINDOW_HEIGHT)
+        self.root.geometry(f"{width}x{height}")
         self.outer.configure(padding=values["outer_padding"])
         self.panels.columnconfigure(0, weight=values["left_weight"])
         self.panels.columnconfigure(1, weight=values["right_weight"])
@@ -676,6 +501,8 @@ class App:
             padx=values["log_pad_x"], pady=(0, values["log_pad_y"])
         )
         self.log.configure(height=values["log_height"])
+        if hasattr(self, "elrs_panel"):
+            self._apply_system_visibility()
         if refresh:
             self.root.update_idletasks()
 
@@ -733,8 +560,8 @@ class App:
 
     def _reset_layout_params(self):
         defaults = {
-            "window_width": 980,
-            "window_height": 856,
+            "window_width": DEFAULT_WINDOW_WIDTH,
+            "window_height": DEFAULT_WINDOW_HEIGHT,
             "outer_padding": 10,
             "column_gap": 5,
             "left_weight": 1,
@@ -912,13 +739,31 @@ class App:
         outer.columnconfigure(1, weight=1)
         row = 0
 
-        ttk.Label(outer, text="EdgeTX 源码目录").grid(row=row, column=0, sticky="w", pady=4)
-        ttk.Entry(outer, textvariable=self.source).grid(row=row, column=1, sticky="ew", padx=6)
-        ttk.Button(outer, text="浏览", command=self.pick_source).grid(row=row, column=2)
+        system_row = ttk.Frame(outer, style="App.TFrame")
+        system_row.grid(row=row, column=0, columnspan=3, sticky="w", pady=(0, 4))
+        ttk.Label(system_row, text="构建系统").pack(side="left", padx=(0, 8))
+        self.system_buttons: dict[str, ttk.Button] = {}
+        for name, text in (("edgetx", "EdgeTX 固件"), ("elrs", "ExpressLRS")):
+            button = ttk.Button(
+                system_row, text=text, width=14,
+                command=lambda n=name: self.switch_system(n),
+            )
+            button.pack(side="left", padx=3)
+            self.system_buttons[name] = button
         row += 1
-        ttk.Label(outer, text="VS Developer PowerShell 脚本").grid(row=row, column=0, sticky="w", pady=4)
-        ttk.Entry(outer, textvariable=self.vs_shell).grid(row=row, column=1, sticky="ew", padx=6)
-        ttk.Button(outer, text="浏览", command=self.pick_vs).grid(row=row, column=2)
+        self.source_label = ttk.Label(outer, text="EdgeTX 源码目录")
+        self.source_label.grid(row=row, column=0, sticky="w", pady=4)
+        self.source_entry = ttk.Entry(outer, textvariable=self.source)
+        self.source_entry.grid(row=row, column=1, sticky="ew", padx=6)
+        self.source_button = ttk.Button(outer, text="浏览", command=self.pick_source)
+        self.source_button.grid(row=row, column=2)
+        row += 1
+        self.vs_label = ttk.Label(outer, text="VS Developer PowerShell 脚本")
+        self.vs_label.grid(row=row, column=0, sticky="w", pady=4)
+        self.vs_entry = ttk.Entry(outer, textvariable=self.vs_shell)
+        self.vs_entry.grid(row=row, column=1, sticky="ew", padx=6)
+        self.vs_button = ttk.Button(outer, text="浏览", command=self.pick_vs)
+        self.vs_button.grid(row=row, column=2)
         row += 1
 
         ttk.Separator(outer).grid(row=row, column=0, columnspan=3, sticky="ew", pady=8)
@@ -1073,6 +918,8 @@ class App:
             )
             self.module_widgets[option] = widget
 
+        self._build_elrs_panel(panels)
+
         hardware_panel, hardware = self._make_rounded_panel(
             panels, "硬件配置", self.layout_vars["hardware_height"].get()
         )
@@ -1150,17 +997,20 @@ class App:
             row=2, column=0, sticky="w",
             pady=(0, self.layout_vars["button_row_pady"].get()),
         )
-        for text, command in (
-            ("检查环境", self.check_environment),
-            ("安装 Python 依赖", self.install_deps),
-            ("配置 CMake", self.configure),
-            ("编译固件", self.build),
-            ("清除日志", self.clear_log),
+        self.action_buttons: dict[str, ttk.Button] = {}
+        for key, text, command in (
+            ("check", "检查环境", self.check_environment),
+            ("deps", "安装 Python 依赖", self.install_deps),
+            ("configure", "配置 CMake", self.configure),
+            ("build", "编译固件", self.build),
+            ("clear", "清除日志", self.clear_log),
         ):
             button = ttk.Button(buttons, text=text, command=command)
             button.pack(
                 side="left", padx=self.layout_vars["button_item_padx"].get()
             )
+            self.action_buttons[key] = button
+        self.switch_system(self.system.get())
         status_row = ttk.Frame(build_inner, style="Panel.TFrame")
         status_row.grid(row=3, column=0, sticky="ew", pady=(0, 4))
         status_row.columnconfigure(0, weight=1)
@@ -1191,7 +1041,298 @@ class App:
         log_scroll.pack(side="right", fill="y")
         self.log.configure(yscrollcommand=log_scroll.set)
 
+    def _build_elrs_panel(self, panels):
+        panel, inner = self._make_rounded_panel(panels, "ExpressLRS 配置", 430)
+        panel.configure(width=960)
+        self.elrs_panel = panel
+        self.elrs_frame = inner
+        inner.columnconfigure(1, weight=1)
+        ttk.Label(inner, text="ExpressLRS 配置", style="PanelTitle.TLabel").grid(
+            row=0, column=0, columnspan=3, sticky="w", pady=(0, 12)
+        )
+        ttk.Button(
+            inner, text="读取编译目标 / 型号", command=self.load_elrs_targets,
+            style="Primary.TButton",
+        ).grid(row=0, column=3, sticky="e", pady=(0, 12))
+        ttk.Label(inner, text="设备类型", style="Panel.TLabel").grid(
+            row=1, column=0, sticky="w", pady=6
+        )
+        kind_combo = ttk.Combobox(
+            inner, textvariable=self.elrs_kind, values=("TX", "RX"),
+            state="readonly", width=10,
+        )
+        kind_combo.grid(row=1, column=1, sticky="w", padx=(10, 20), pady=6)
+        kind_combo.bind("<<ComboboxSelected>>", lambda _e: self._on_elrs_kind_changed())
+        ttk.Label(inner, text="厂商", style="Panel.TLabel").grid(
+            row=1, column=2, sticky="w", pady=6
+        )
+        self.elrs_vendor_combo = ttk.Combobox(
+            inner, textvariable=self.elrs_vendor, values=(ELRS_MANUAL_MODE,),
+            state="readonly", width=26,
+        )
+        self.elrs_vendor_combo.grid(row=1, column=3, sticky="w", padx=(10, 0), pady=6)
+        self.elrs_vendor_combo.bind(
+            "<<ComboboxSelected>>", lambda _e: self._refresh_elrs_products()
+        )
+        ttk.Label(inner, text="编译目标", style="Panel.TLabel").grid(
+            row=2, column=0, sticky="w", pady=6
+        )
+        self.elrs_env_combo = ttk.Combobox(
+            inner, textvariable=self.elrs_env, state="readonly", width=44
+        )
+        self.elrs_env_combo.grid(row=2, column=1, sticky="w", padx=(10, 20), pady=6)
+        ttk.Label(inner, text="型号", style="Panel.TLabel").grid(
+            row=2, column=2, sticky="w", pady=6
+        )
+        self.elrs_product_combo = ttk.Combobox(
+            inner, textvariable=self.elrs_product, state="readonly", width=26
+        )
+        self.elrs_product_combo.grid(row=2, column=3, sticky="w", padx=(10, 0), pady=6)
+        self.elrs_product_combo.bind(
+            "<<ComboboxSelected>>", lambda _e: self._on_elrs_product_selected()
+        )
+        ttk.Label(
+            inner, textvariable=self.elrs_layout, style="Panel.TLabel",
+            foreground="#1565c0", wraplength=880,
+        ).grid(row=3, column=0, columnspan=4, sticky="w", pady=(12, 6))
+        ttk.Label(
+            inner,
+            text="提示：PlatformIO 装在独立目录 tools\\pio-venv，不需要 VSCode；首次编译需联网下载工具链，请耐心等待。",
+            style="Panel.TLabel", foreground="#b45309", wraplength=880,
+        ).grid(row=4, column=0, columnspan=4, sticky="w", pady=(8, 4))
+        ttk.Label(inner, text="user_defines 常用配置", style="PanelTitle.TLabel").grid(
+            row=5, column=0, columnspan=4, sticky="w", pady=(14, 6)
+        )
+        ttk.Label(inner, text="频段", style="Panel.TLabel").grid(
+            row=6, column=0, sticky="w", pady=6
+        )
+        ttk.Combobox(
+            inner, textvariable=self.elrs_domain,
+            values=("默认", *elrs_backend.REGULATORY_DOMAINS),
+            state="readonly", width=28,
+        ).grid(row=6, column=1, sticky="w", padx=(10, 20), pady=6)
+        ttk.Label(inner, text="绑定短语", style="Panel.TLabel").grid(
+            row=6, column=2, sticky="w", pady=6
+        )
+        ttk.Entry(inner, textvariable=self.elrs_binding, width=32).grid(
+            row=6, column=3, sticky="w", padx=(10, 0), pady=6
+        )
+        ttk.Checkbutton(
+            inner, text="首次连接锁定", variable=self.elrs_lock,
+            style="Panel.TCheckbutton",
+        ).grid(row=7, column=0, columnspan=2, sticky="w", pady=6)
+        ttk.Button(
+            inner, text="保存 user_defines", command=self.save_user_defines,
+        ).grid(row=7, column=2, sticky="w", pady=6)
+        ttk.Button(
+            inner, text="打开 user_defines.txt", command=self.open_user_defines,
+        ).grid(row=7, column=3, sticky="w", pady=6)
+
+    def switch_system(self, name: str):
+        is_elrs = name == "elrs"
+        self.system.set(name)
+        for key, button in self.system_buttons.items():
+            button.configure(style="Primary.TButton" if key == name else "TButton")
+        self.root.title("ExpressLRS Builder - Windows" if is_elrs else "EdgeTX Builder - Windows")
+        self.source_label.configure(text="ELRS 源码目录" if is_elrs else "EdgeTX 源码目录")
+        self.source_entry.configure(textvariable=self.elrs_source if is_elrs else self.source)
+        for widget in (self.vs_label, self.vs_entry, self.vs_button):
+            widget.configure(state="disabled" if is_elrs else "normal")
+        self.action_buttons["deps"].configure(
+            text="安装 PlatformIO" if is_elrs else "安装 Python 依赖"
+        )
+        configure_button = self.action_buttons["configure"]
+        if is_elrs:
+            configure_button.pack_forget()
+        else:
+            configure_button.pack(
+                side="left", before=self.action_buttons["build"],
+                padx=self.layout_vars["button_item_padx"].get(),
+            )
+        self._apply_system_visibility()
+        if is_elrs and not self.elrs_defines_loaded:
+            self.load_user_defines()
+        self.status.set(
+            "请选择 ELRS 源码目录，然后点击检查环境" if is_elrs
+            else "请选择 EdgeTX 源码目录，然后点击检查环境"
+        )
+
+    def _apply_system_visibility(self):
+        is_elrs = self.system.get() == "elrs"
+        for widget in (self.left_column, self.right_column, self.hardware_panel):
+            if is_elrs:
+                widget.grid_remove()
+            else:
+                widget.grid()
+        if is_elrs:
+            self.elrs_panel.grid(row=0, column=0, columnspan=2, sticky="w")
+        else:
+            self.elrs_panel.grid_remove()
+
+    def _load_hardware_catalog(self):
+        source = Path(self.elrs_source.get().strip())
+        self.elrs_hardware = elrs_backend.read_hardware_catalog(source, self.elrs_envs)
+        vendors = [ELRS_MANUAL_MODE, *sorted(self.elrs_hardware, key=str.upper)]
+        self.elrs_vendor_combo["values"] = vendors
+        if self.elrs_vendor.get() not in self.elrs_hardware:
+            self.elrs_vendor.set(ELRS_MANUAL_MODE)
+        products = [item for items in self.elrs_hardware.values() for item in items.values()]
+        buildable = sum(1 for item in products if item["envs"])
+        self.write_log(
+            f"ELRS 硬件目录: {len(self.elrs_hardware)} 厂商 / {len(products)} 型号，"
+            f"当前源码可编译 {buildable} 个"
+        )
+        self._refresh_elrs_products()
+
+    def _on_elrs_kind_changed(self):
+        if self.elrs_vendor.get() == ELRS_MANUAL_MODE:
+            self._refresh_elrs_envs()
+        else:
+            self._refresh_elrs_products()
+
+    def _refresh_elrs_products(self):
+        vendor = self.elrs_vendor.get()
+        if vendor == ELRS_MANUAL_MODE or vendor not in self.elrs_hardware:
+            self.elrs_product_combo["values"] = ()
+            self.elrs_product.set("")
+            self.elrs_layout.set("手动模式：可直接按 TX/RX 选择编译目标。")
+            self._refresh_elrs_envs()
+            return
+        items = {
+            label: item for label, item in self.elrs_hardware[vendor].items()
+            if item["kind"] == self.elrs_kind.get()
+        }
+        labels = sorted(items, key=str.upper)
+        self.elrs_product_combo["values"] = labels
+        if self.elrs_product.get() not in items:
+            self.elrs_product.set(labels[0] if labels else "")
+        self._on_elrs_product_selected()
+
+    def _on_elrs_product_selected(self):
+        item = self.elrs_hardware.get(self.elrs_vendor.get(), {}).get(self.elrs_product.get())
+        if not item:
+            self.elrs_layout.set(self.elrs_vendor.get() + "：该类型下暂无型号")
+            return
+        envs = item["envs"]
+        self.elrs_env_combo["values"] = envs
+        if self.elrs_env.get() not in envs:
+            self.elrs_env.set(envs[0] if envs else "")
+        methods = ", ".join(item["upload_methods"]) or "-"
+        text = (f"固件 {item['firmware']} | 布局 {item['layout'] or '-'} "
+                f"| 上传 {methods} | 平台 {item['platform']}")
+        if not envs:
+            text = "当前源码无对应编译目标（旧款专属 target）：" + text
+        self.elrs_layout.set(text)
+
+    def _refresh_elrs_envs(self):
+        envs = self.elrs_envs.get(self.elrs_kind.get(), [])
+        self.elrs_env_combo["values"] = envs
+        if self.elrs_env.get() not in envs:
+            self.elrs_env.set(envs[0] if envs else "")
+
+    def load_user_defines(self):
+        source = Path(self.elrs_source.get().strip())
+        if not elrs_backend.user_defines_path(source):
+            self.write_log("提示：未找到 user_defines.txt，请检查 ELRS 源码目录。")
+            return
+        values = elrs_backend.read_user_defines(source)
+        self.elrs_domain.set(str(values["domain"]))
+        self.elrs_binding.set(str(values["binding"]))
+        self.elrs_lock.set(bool(values["lock"]))
+        self.elrs_defines_loaded = True
+        self.write_log(f"user_defines: 频段={values['domain']}, 锁定={'开' if values['lock'] else '关'}")
+
+    def _apply_user_defines(self) -> bool:
+        source = Path(self.elrs_source.get().strip())
+        values = {
+            "domain": self.elrs_domain.get(),
+            "binding": self.elrs_binding.get(),
+            "lock": self.elrs_lock.get(),
+        }
+        ok, note = elrs_backend.write_user_defines(source, values)
+        self.write_log(("user_defines 已保存。" if ok else "失败：") + note)
+        return ok
+
+    def save_user_defines(self):
+        self.status.set("user_defines 已保存" if self._apply_user_defines()
+                        else "user_defines 保存失败")
+
+    def open_user_defines(self):
+        import os
+
+        source = Path(self.elrs_source.get().strip())
+        path = elrs_backend.user_defines_path(source)
+        if not path:
+            messagebox.showerror("缺少文件", "未找到 user_defines.txt。")
+            return
+        self._apply_user_defines()
+        try:
+            os.startfile(str(path))
+        except OSError as exc:
+            messagebox.showerror("打开失败", str(exc))
+
+    def load_elrs_targets(self):
+        source = Path(self.elrs_source.get().strip())
+        if not elrs_backend.find_source(source):
+            messagebox.showerror("目录无效", "请选择包含 platformio.ini 的 ELRS 源码目录（根目录或 src 子目录）。")
+            return
+
+        self.busy = True
+
+        def worker():
+            self.events.put(("busy", "1"))
+            self.events.put(("status", "正在读取 ELRS 编译目标..."))
+            envs = elrs_backend.list_envs(source)
+            self.events.put(("elrs_envs", json.dumps(envs)))
+            count = sum(len(items) for items in envs.values())
+            self.events.put(("log", f"ELRS 目标: TX {len(envs.get('TX', []))} / RX {len(envs.get('RX', []))}"))
+            self.events.put(("busy", "0"))
+            self.events.put(("status", f"已读取 {count} 个 ELRS 编译目标" if count
+                             else "未读取到编译目标，请检查源码与 PlatformIO 安装"))
+
+        self.run_async(worker)
+
+    def _elrs_check_worker(self):
+        self.events.put(("busy", "1"))
+        source = Path(self.elrs_source.get().strip())
+        ok = elrs_backend.check_environment(
+            source, lambda line: self.events.put(("log", line))
+        )
+        self.events.put(("busy", "0"))
+        self.events.put(("status", "ELRS 环境检查完成" if ok
+                         else "ELRS 环境检查未通过，请查看日志"))
+
+    def _elrs_install_worker(self):
+        self.events.put(("busy", "1"))
+        ok = elrs_backend.install_platformio(
+            lambda line: self.events.put(("log", line))
+        )
+        self.events.put(("busy", "0"))
+        self.events.put(("status", "PlatformIO 安装完成/已安装" if ok
+                         else "PlatformIO 安装失败，请查看日志"))
+
+    def _elrs_build_worker(self, source: Path, env: str):
+        self.events.put(("busy", "1"))
+        self.events.put(("progress_mode", "indeterminate"))
+        ok, artifacts = elrs_backend.build_firmware(
+            source, env, lambda line: self.events.put(("log", line))
+        )
+        for artifact in artifacts:
+            self.events.put(("log", f"产物: {artifact}"))
+        self.events.put(("progress_mode", "determinate"))
+        self.events.put(("busy", "0"))
+        self.events.put(("status", "ELRS 固件编译完成" if ok
+                         else "ELRS 编译失败，请查看日志"))
+
     def pick_source(self):
+        if self.system.get() == "elrs":
+            value = filedialog.askdirectory(title="选择 ELRS 源码目录")
+            if value:
+                self.elrs_source.set(value)
+                self.elrs_defines_loaded = False
+                self.load_user_defines()
+                self.load_elrs_targets()
+            return
         value = filedialog.askdirectory(title="选择 EdgeTX 源码目录")
         if value:
             self.source.set(value)
@@ -1346,6 +1487,9 @@ class App:
         self.root.after(180, self.spinner_tick)
 
     def check_environment(self):
+        if self.system.get() == "elrs":
+            self.run_async(self._elrs_check_worker)
+            return
         source = self.source_path()
         if not source:
             return
@@ -1405,6 +1549,9 @@ class App:
         self.events.put(("status", "检查完成；缺失项请按需点击安装或修复"))
 
     def install_deps(self):
+        if self.system.get() == "elrs":
+            self.run_async(self._elrs_install_worker)
+            return
         source = self.source_path()
         if not source:
             return
@@ -1518,6 +1665,27 @@ class App:
                                                         "CMake 配置完成", shell=True))
 
     def build(self):
+        if self.system.get() == "elrs":
+            env = self.elrs_env.get()
+            source = Path(self.elrs_source.get().strip())
+            product = self.elrs_hardware.get(self.elrs_vendor.get(), {}).get(
+                self.elrs_product.get()
+            )
+            if product is not None and not product["envs"]:
+                messagebox.showerror(
+                    "目标无效",
+                    "该型号属于旧款专属 target，当前 ELRS 源码没有对应编译目标；"
+                    "请切换到手动模式或选择其他型号。",
+                )
+                return
+            if not env:
+                messagebox.showerror("目标无效", "请先点击读取编译目标，并选择一个编译目标。")
+                return
+            if not self._apply_user_defines():
+                messagebox.showerror("配置失败", "user_defines 保存失败，已取消编译。")
+                return
+            self.run_async(lambda: self._elrs_build_worker(source, env))
+            return
         result = self.cmake_args()
         if result:
             build, _ = result
@@ -1600,6 +1768,17 @@ class App:
                 elif kind == "progress":
                     done, total = (int(x) for x in value.split("/"))
                     self.progress.configure(maximum=total, value=done)
+                elif kind == "progress_mode":
+                    if value == "indeterminate":
+                        self.progress.configure(mode="indeterminate")
+                        self.progress.start(12)
+                    else:
+                        self.progress.stop()
+                        self.progress.configure(mode="determinate", value=0)
+                elif kind == "elrs_envs":
+                    self.elrs_envs = json.loads(value)
+                    self._refresh_elrs_envs()
+                    self._load_hardware_catalog()
                 elif kind == "log":
                     self.write_log(value)
                 else:
