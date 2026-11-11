@@ -1059,7 +1059,7 @@ class App:
         ).grid(row=1, column=2, rowspan=2, sticky="w", pady=4)
         ttk.Label(
             inner,
-            text="界面预览：PlatformIO 后端将在下一步接入，当前目标列表为演示数据，不会执行真实编译。",
+            text="提示：PlatformIO 装在独立目录 tools\\pio-venv，不需要 VSCode；首次编译需联网下载工具链，请耐心等待。",
             style="Panel.TLabel", foreground="#b45309", wraplength=880,
         ).grid(row=3, column=0, columnspan=4, sticky="w", pady=(10, 2))
         ttk.Label(
@@ -1091,7 +1091,7 @@ class App:
             )
         self._apply_system_visibility()
         self.status.set(
-            "请选择 ELRS 源码目录，然后点击检查环境（界面预览）" if is_elrs
+            "请选择 ELRS 源码目录，然后点击检查环境" if is_elrs
             else "请选择 EdgeTX 源码目录，然后点击检查环境"
         )
 
@@ -1118,36 +1118,53 @@ class App:
         if not elrs_backend.find_source(source):
             messagebox.showerror("目录无效", "请选择包含 platformio.ini 的 ELRS 源码目录（根目录或 src 子目录）。")
             return
-        self.elrs_envs = elrs_backend.list_envs(source)
-        self._refresh_elrs_envs()
-        count = sum(len(envs) for envs in self.elrs_envs.values())
-        self.status.set(f"已读取 {count} 个 ELRS 编译目标（演示数据）")
-        self.write_log(f"ELRS 编译目标（演示数据）: {self.elrs_envs}")
+
+        self.busy = True
+
+        def worker():
+            self.events.put(("busy", "1"))
+            self.events.put(("status", "正在读取 ELRS 编译目标..."))
+            envs = elrs_backend.list_envs(source)
+            self.events.put(("elrs_envs", json.dumps(envs)))
+            count = sum(len(items) for items in envs.values())
+            self.events.put(("log", f"ELRS 目标: TX {len(envs.get('TX', []))} / RX {len(envs.get('RX', []))}"))
+            self.events.put(("busy", "0"))
+            self.events.put(("status", f"已读取 {count} 个 ELRS 编译目标" if count
+                             else "未读取到编译目标，请检查源码与 PlatformIO 安装"))
+
+        self.run_async(worker)
 
     def _elrs_check_worker(self):
         self.events.put(("busy", "1"))
         source = Path(self.elrs_source.get().strip())
-        elrs_backend.check_environment(
+        ok = elrs_backend.check_environment(
             source, lambda line: self.events.put(("log", line))
         )
         self.events.put(("busy", "0"))
-        self.events.put(("status", "ELRS 环境检查完成（界面预览）"))
+        self.events.put(("status", "ELRS 环境检查完成" if ok
+                         else "ELRS 环境检查未通过，请查看日志"))
 
     def _elrs_install_worker(self):
         self.events.put(("busy", "1"))
-        elrs_backend.install_platformio(lambda line: self.events.put(("log", line)))
+        ok = elrs_backend.install_platformio(
+            lambda line: self.events.put(("log", line))
+        )
         self.events.put(("busy", "0"))
-        self.events.put(("status", "PlatformIO 安装将在 M2 提供"))
+        self.events.put(("status", "PlatformIO 安装完成/已安装" if ok
+                         else "PlatformIO 安装失败，请查看日志"))
 
     def _elrs_build_worker(self, source: Path, env: str):
         self.events.put(("busy", "1"))
-        _ok, artifacts = elrs_backend.build_firmware(
+        self.events.put(("progress_mode", "indeterminate"))
+        ok, artifacts = elrs_backend.build_firmware(
             source, env, lambda line: self.events.put(("log", line))
         )
         for artifact in artifacts:
             self.events.put(("log", f"产物: {artifact}"))
+        self.events.put(("progress_mode", "determinate"))
         self.events.put(("busy", "0"))
-        self.events.put(("status", "ELRS 编译将在 M2 提供"))
+        self.events.put(("status", "ELRS 固件编译完成" if ok
+                         else "ELRS 编译失败，请查看日志"))
 
     def pick_source(self):
         if self.system.get() == "elrs":
@@ -1578,6 +1595,16 @@ class App:
                 elif kind == "progress":
                     done, total = (int(x) for x in value.split("/"))
                     self.progress.configure(maximum=total, value=done)
+                elif kind == "progress_mode":
+                    if value == "indeterminate":
+                        self.progress.configure(mode="indeterminate")
+                        self.progress.start(12)
+                    else:
+                        self.progress.stop()
+                        self.progress.configure(mode="determinate", value=0)
+                elif kind == "elrs_envs":
+                    self.elrs_envs = json.loads(value)
+                    self._refresh_elrs_envs()
                 elif kind == "log":
                     self.write_log(value)
                 else:
