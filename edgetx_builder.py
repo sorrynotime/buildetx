@@ -14,6 +14,7 @@ import tkinter as tk
 from pathlib import Path
 from tkinter import filedialog, messagebox, ttk
 
+import elrs_backend
 from builder_utils import external_python, resource_path, run_capture
 from edgetx_backend import (
     MISSING_TOOL_HELP,
@@ -100,6 +101,11 @@ class App:
         self.default_mode = tk.StringVar(value="默认")
         self.build_dir = tk.StringVar(value="")
         self.status = tk.StringVar(value="请选择 EdgeTX 源码目录，然后点击检查环境")
+        self.system = tk.StringVar(value="edgetx")
+        self.elrs_source = tk.StringVar(value=elrs_backend.DEFAULT_SOURCE)
+        self.elrs_kind = tk.StringVar(value="TX")
+        self.elrs_env = tk.StringVar(value="")
+        self.elrs_envs: dict[str, list[str]] = {}
         self.feature_vars = {
             option: tk.BooleanVar(value=default)
             for option, _, default in COMMON_FEATURES
@@ -482,6 +488,8 @@ class App:
             padx=values["log_pad_x"], pady=(0, values["log_pad_y"])
         )
         self.log.configure(height=values["log_height"])
+        if hasattr(self, "elrs_panel"):
+            self._apply_system_visibility()
         if refresh:
             self.root.update_idletasks()
 
@@ -718,13 +726,31 @@ class App:
         outer.columnconfigure(1, weight=1)
         row = 0
 
-        ttk.Label(outer, text="EdgeTX 源码目录").grid(row=row, column=0, sticky="w", pady=4)
-        ttk.Entry(outer, textvariable=self.source).grid(row=row, column=1, sticky="ew", padx=6)
-        ttk.Button(outer, text="浏览", command=self.pick_source).grid(row=row, column=2)
+        system_row = ttk.Frame(outer, style="App.TFrame")
+        system_row.grid(row=row, column=0, columnspan=3, sticky="w", pady=(0, 4))
+        ttk.Label(system_row, text="构建系统").pack(side="left", padx=(0, 8))
+        self.system_buttons: dict[str, ttk.Button] = {}
+        for name, text in (("edgetx", "EdgeTX 固件"), ("elrs", "ExpressLRS")):
+            button = ttk.Button(
+                system_row, text=text, width=14,
+                command=lambda n=name: self.switch_system(n),
+            )
+            button.pack(side="left", padx=3)
+            self.system_buttons[name] = button
         row += 1
-        ttk.Label(outer, text="VS Developer PowerShell 脚本").grid(row=row, column=0, sticky="w", pady=4)
-        ttk.Entry(outer, textvariable=self.vs_shell).grid(row=row, column=1, sticky="ew", padx=6)
-        ttk.Button(outer, text="浏览", command=self.pick_vs).grid(row=row, column=2)
+        self.source_label = ttk.Label(outer, text="EdgeTX 源码目录")
+        self.source_label.grid(row=row, column=0, sticky="w", pady=4)
+        self.source_entry = ttk.Entry(outer, textvariable=self.source)
+        self.source_entry.grid(row=row, column=1, sticky="ew", padx=6)
+        self.source_button = ttk.Button(outer, text="浏览", command=self.pick_source)
+        self.source_button.grid(row=row, column=2)
+        row += 1
+        self.vs_label = ttk.Label(outer, text="VS Developer PowerShell 脚本")
+        self.vs_label.grid(row=row, column=0, sticky="w", pady=4)
+        self.vs_entry = ttk.Entry(outer, textvariable=self.vs_shell)
+        self.vs_entry.grid(row=row, column=1, sticky="ew", padx=6)
+        self.vs_button = ttk.Button(outer, text="浏览", command=self.pick_vs)
+        self.vs_button.grid(row=row, column=2)
         row += 1
 
         ttk.Separator(outer).grid(row=row, column=0, columnspan=3, sticky="ew", pady=8)
@@ -879,6 +905,8 @@ class App:
             )
             self.module_widgets[option] = widget
 
+        self._build_elrs_panel(panels)
+
         hardware_panel, hardware = self._make_rounded_panel(
             panels, "硬件配置", self.layout_vars["hardware_height"].get()
         )
@@ -956,17 +984,20 @@ class App:
             row=2, column=0, sticky="w",
             pady=(0, self.layout_vars["button_row_pady"].get()),
         )
-        for text, command in (
-            ("检查环境", self.check_environment),
-            ("安装 Python 依赖", self.install_deps),
-            ("配置 CMake", self.configure),
-            ("编译固件", self.build),
-            ("清除日志", self.clear_log),
+        self.action_buttons: dict[str, ttk.Button] = {}
+        for key, text, command in (
+            ("check", "检查环境", self.check_environment),
+            ("deps", "安装 Python 依赖", self.install_deps),
+            ("configure", "配置 CMake", self.configure),
+            ("build", "编译固件", self.build),
+            ("clear", "清除日志", self.clear_log),
         ):
             button = ttk.Button(buttons, text=text, command=command)
             button.pack(
                 side="left", padx=self.layout_vars["button_item_padx"].get()
             )
+            self.action_buttons[key] = button
+        self.switch_system(self.system.get())
         status_row = ttk.Frame(build_inner, style="Panel.TFrame")
         status_row.grid(row=3, column=0, sticky="ew", pady=(0, 4))
         status_row.columnconfigure(0, weight=1)
@@ -997,7 +1028,134 @@ class App:
         log_scroll.pack(side="right", fill="y")
         self.log.configure(yscrollcommand=log_scroll.set)
 
+    def _build_elrs_panel(self, panels):
+        panel, inner = self._make_rounded_panel(panels, "ExpressLRS 配置", 330)
+        panel.configure(width=960)
+        self.elrs_panel = panel
+        self.elrs_frame = inner
+        inner.columnconfigure(1, weight=1)
+        ttk.Label(inner, text="ExpressLRS 配置", style="PanelTitle.TLabel").grid(
+            row=0, column=0, columnspan=4, sticky="w", pady=(0, 8)
+        )
+        ttk.Label(inner, text="设备类型", style="Panel.TLabel").grid(
+            row=1, column=0, sticky="w", pady=4
+        )
+        kind_combo = ttk.Combobox(
+            inner, textvariable=self.elrs_kind, values=("TX", "RX"),
+            state="readonly", width=10,
+        )
+        kind_combo.grid(row=1, column=1, sticky="w", padx=(10, 20), pady=4)
+        kind_combo.bind("<<ComboboxSelected>>", lambda _e: self._refresh_elrs_envs())
+        ttk.Label(inner, text="编译目标", style="Panel.TLabel").grid(
+            row=2, column=0, sticky="w", pady=4
+        )
+        self.elrs_env_combo = ttk.Combobox(
+            inner, textvariable=self.elrs_env, state="readonly", width=44
+        )
+        self.elrs_env_combo.grid(row=2, column=1, sticky="w", padx=(10, 20), pady=4)
+        ttk.Button(
+            inner, text="读取编译目标", command=self.load_elrs_targets,
+            style="Primary.TButton",
+        ).grid(row=1, column=2, rowspan=2, sticky="w", pady=4)
+        ttk.Label(
+            inner,
+            text="界面预览：PlatformIO 后端将在下一步接入，当前目标列表为演示数据，不会执行真实编译。",
+            style="Panel.TLabel", foreground="#b45309", wraplength=880,
+        ).grid(row=3, column=0, columnspan=4, sticky="w", pady=(10, 2))
+        ttk.Label(
+            inner,
+            text="user_defines 常用配置（频段、绑定短语等）将在后续步骤提供。",
+            style="Panel.TLabel", foreground="#5f6368", wraplength=880,
+        ).grid(row=4, column=0, columnspan=4, sticky="w", pady=2)
+
+    def switch_system(self, name: str):
+        is_elrs = name == "elrs"
+        self.system.set(name)
+        for key, button in self.system_buttons.items():
+            button.configure(style="Primary.TButton" if key == name else "TButton")
+        self.root.title("ExpressLRS Builder - Windows" if is_elrs else "EdgeTX Builder - Windows")
+        self.source_label.configure(text="ELRS 源码目录" if is_elrs else "EdgeTX 源码目录")
+        self.source_entry.configure(textvariable=self.elrs_source if is_elrs else self.source)
+        for widget in (self.vs_label, self.vs_entry, self.vs_button):
+            widget.configure(state="disabled" if is_elrs else "normal")
+        self.action_buttons["deps"].configure(
+            text="安装 PlatformIO" if is_elrs else "安装 Python 依赖"
+        )
+        configure_button = self.action_buttons["configure"]
+        if is_elrs:
+            configure_button.pack_forget()
+        else:
+            configure_button.pack(
+                side="left", before=self.action_buttons["build"],
+                padx=self.layout_vars["button_item_padx"].get(),
+            )
+        self._apply_system_visibility()
+        self.status.set(
+            "请选择 ELRS 源码目录，然后点击检查环境（界面预览）" if is_elrs
+            else "请选择 EdgeTX 源码目录，然后点击检查环境"
+        )
+
+    def _apply_system_visibility(self):
+        is_elrs = self.system.get() == "elrs"
+        for widget in (self.left_column, self.right_column, self.hardware_panel):
+            if is_elrs:
+                widget.grid_remove()
+            else:
+                widget.grid()
+        if is_elrs:
+            self.elrs_panel.grid(row=0, column=0, columnspan=2, sticky="w")
+        else:
+            self.elrs_panel.grid_remove()
+
+    def _refresh_elrs_envs(self):
+        envs = self.elrs_envs.get(self.elrs_kind.get(), [])
+        self.elrs_env_combo["values"] = envs
+        if self.elrs_env.get() not in envs:
+            self.elrs_env.set(envs[0] if envs else "")
+
+    def load_elrs_targets(self):
+        source = Path(self.elrs_source.get().strip())
+        if not elrs_backend.find_source(source):
+            messagebox.showerror("目录无效", "请选择包含 platformio.ini 的 ELRS 源码目录（根目录或 src 子目录）。")
+            return
+        self.elrs_envs = elrs_backend.list_envs(source)
+        self._refresh_elrs_envs()
+        count = sum(len(envs) for envs in self.elrs_envs.values())
+        self.status.set(f"已读取 {count} 个 ELRS 编译目标（演示数据）")
+        self.write_log(f"ELRS 编译目标（演示数据）: {self.elrs_envs}")
+
+    def _elrs_check_worker(self):
+        self.events.put(("busy", "1"))
+        source = Path(self.elrs_source.get().strip())
+        elrs_backend.check_environment(
+            source, lambda line: self.events.put(("log", line))
+        )
+        self.events.put(("busy", "0"))
+        self.events.put(("status", "ELRS 环境检查完成（界面预览）"))
+
+    def _elrs_install_worker(self):
+        self.events.put(("busy", "1"))
+        elrs_backend.install_platformio(lambda line: self.events.put(("log", line)))
+        self.events.put(("busy", "0"))
+        self.events.put(("status", "PlatformIO 安装将在 M2 提供"))
+
+    def _elrs_build_worker(self, source: Path, env: str):
+        self.events.put(("busy", "1"))
+        _ok, artifacts = elrs_backend.build_firmware(
+            source, env, lambda line: self.events.put(("log", line))
+        )
+        for artifact in artifacts:
+            self.events.put(("log", f"产物: {artifact}"))
+        self.events.put(("busy", "0"))
+        self.events.put(("status", "ELRS 编译将在 M2 提供"))
+
     def pick_source(self):
+        if self.system.get() == "elrs":
+            value = filedialog.askdirectory(title="选择 ELRS 源码目录")
+            if value:
+                self.elrs_source.set(value)
+                self.load_elrs_targets()
+            return
         value = filedialog.askdirectory(title="选择 EdgeTX 源码目录")
         if value:
             self.source.set(value)
@@ -1152,6 +1310,9 @@ class App:
         self.root.after(180, self.spinner_tick)
 
     def check_environment(self):
+        if self.system.get() == "elrs":
+            self.run_async(self._elrs_check_worker)
+            return
         source = self.source_path()
         if not source:
             return
@@ -1211,6 +1372,9 @@ class App:
         self.events.put(("status", "检查完成；缺失项请按需点击安装或修复"))
 
     def install_deps(self):
+        if self.system.get() == "elrs":
+            self.run_async(self._elrs_install_worker)
+            return
         source = self.source_path()
         if not source:
             return
@@ -1324,6 +1488,14 @@ class App:
                                                         "CMake 配置完成", shell=True))
 
     def build(self):
+        if self.system.get() == "elrs":
+            env = self.elrs_env.get()
+            source = Path(self.elrs_source.get().strip())
+            if not env:
+                messagebox.showerror("目标无效", "请先点击读取编译目标，并选择一个编译目标。")
+                return
+            self.run_async(lambda: self._elrs_build_worker(source, env))
+            return
         result = self.cmake_args()
         if result:
             build, _ = result
