@@ -173,6 +173,61 @@ def build_firmware(source: Path, env: str, on_line) -> tuple[bool, list[Path]]:
     return code == 0, artifacts
 
 
+def read_hardware_catalog(
+    source: Path, envs_by_kind: dict[str, list[str]] | None = None
+) -> dict[str, dict[str, dict]]:
+    """Vendor -> product -> build info from ExpressLRS hardware/targets.json.
+
+    Each product carries the matching PlatformIO environments; an empty list
+    means the checked-out ELRS version no longer ships that legacy target.
+    """
+    workdir = find_source(source)
+    if not workdir:
+        return {}
+    path = workdir / "hardware" / "targets.json"
+    if not path.is_file():
+        path = workdir.parent / "hardware" / "targets.json"
+    if not path.is_file():
+        return {}
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+    groups = envs_by_kind if envs_by_kind is not None else list_envs(source)
+    all_envs = sorted({env for items in groups.values() for env in items})
+    catalog: dict[str, dict[str, dict]] = {}
+    for brand, info in data.items():
+        if not isinstance(info, dict):
+            continue
+        vendor = str(info.get("name", brand))
+        for section, items in info.items():
+            if not isinstance(items, dict):
+                continue
+            for key, product in items.items():
+                if not isinstance(product, dict) or "product_name" not in product:
+                    continue
+                firmware = str(product.get("firmware", ""))
+                matched = sorted(
+                    env for env in all_envs
+                    if env == firmware or env.startswith(firmware + "_via_")
+                )
+                name = str(product["product_name"])
+                label = name
+                products = catalog.setdefault(vendor, {})
+                if label in products:
+                    label = f"{name} [{section}/{key}]"
+                products[label] = {
+                    "product_name": name,
+                    "firmware": firmware,
+                    "kind": "TX" if firmware.endswith("_TX") or section.startswith("tx_") else "RX",
+                    "layout": str(product.get("layout_file", "")),
+                    "upload_methods": list(product.get("upload_methods", [])),
+                    "platform": str(product.get("platform", "")),
+                    "envs": matched,
+                }
+    return dict(sorted(catalog.items(), key=lambda item: item[0].upper()))
+
+
 REGULATORY_DOMAINS = (
     "Regulatory_Domain_AU_915", "Regulatory_Domain_EU_868",
     "Regulatory_Domain_IN_866", "Regulatory_Domain_AU_433",
@@ -258,12 +313,13 @@ def write_user_defines(source: Path, values: dict[str, str | bool]) -> tuple[boo
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="ExpressLRS PlatformIO 后端")
-    parser.add_argument("command", choices=("check", "install", "list", "build", "defines"))
+    parser.add_argument("command", choices=("check", "install", "list", "build", "defines", "hardware"))
     parser.add_argument("--source", default=DEFAULT_SOURCE)
     parser.add_argument("--env", default="")
     parser.add_argument("--domain", choices=("默认", *REGULATORY_DOMAINS))
     parser.add_argument("--binding")
     parser.add_argument("--lock", choices=("on", "off"))
+    parser.add_argument("--vendor")
     args = parser.parse_args()
     source = Path(args.source)
 
@@ -283,6 +339,25 @@ def main() -> int:
             print(f"{kind} ({len(envs)}):")
             for env in envs:
                 print(f"  {env}")
+        return 0
+    if args.command == "hardware":
+        catalog = read_hardware_catalog(source)
+        if not catalog:
+            print("未找到 hardware/targets.json。")
+            return 1
+        products = [item for items in catalog.values() for item in items.values()]
+        buildable = [item for item in products if item["envs"]]
+        print(f"厂商 {len(catalog)} 家，型号 {len(products)} 个，可编译 {len(buildable)} 个")
+        vendors = [args.vendor] if args.vendor else list(catalog)
+        for vendor in vendors:
+            items = catalog.get(vendor)
+            if not items:
+                print(f"未找到厂商: {vendor}")
+                continue
+            print(f"\n{vendor} ({len(items)}):")
+            for label, item in sorted(items.items()):
+                envs = ", ".join(item["envs"]) if item["envs"] else "当前源码无对应编译目标"
+                print(f"  {label}  ->  {envs}")
         return 0
     if args.command == "defines":
         values = read_user_defines(source)

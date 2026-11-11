@@ -33,6 +33,7 @@ from edgetx_backend import (
 # GUI application.
 
 DEFAULT_SOURCE = r"E:\Code\edgetx"
+ELRS_MANUAL_MODE = "（手动选择目标）"
 DEFAULT_VS_SHELL = r"C:\ProgramData\Microsoft\Windows\Start Menu\Programs\Visual Studio\Visual Studio Tools\Developer PowerShell for VS.lnk"
 APP_NAME = "EdgeTX Builder"
 APP_VERSION = "1.0"
@@ -110,6 +111,10 @@ class App:
         self.elrs_binding = tk.StringVar(value="")
         self.elrs_lock = tk.BooleanVar(value=False)
         self.elrs_defines_loaded = False
+        self.elrs_vendor = tk.StringVar(value=ELRS_MANUAL_MODE)
+        self.elrs_product = tk.StringVar(value="")
+        self.elrs_layout = tk.StringVar(value="")
+        self.elrs_hardware: dict[str, dict[str, dict]] = {}
         self.feature_vars = {
             option: tk.BooleanVar(value=default)
             for option, _, default in COMMON_FEATURES
@@ -1033,66 +1038,91 @@ class App:
         self.log.configure(yscrollcommand=log_scroll.set)
 
     def _build_elrs_panel(self, panels):
-        panel, inner = self._make_rounded_panel(panels, "ExpressLRS 配置", 330)
+        panel, inner = self._make_rounded_panel(panels, "ExpressLRS 配置", 390)
         panel.configure(width=960)
         self.elrs_panel = panel
         self.elrs_frame = inner
         inner.columnconfigure(1, weight=1)
         ttk.Label(inner, text="ExpressLRS 配置", style="PanelTitle.TLabel").grid(
-            row=0, column=0, columnspan=4, sticky="w", pady=(0, 8)
+            row=0, column=0, columnspan=3, sticky="w", pady=(0, 8)
         )
+        ttk.Button(
+            inner, text="读取编译目标 / 型号", command=self.load_elrs_targets,
+            style="Primary.TButton",
+        ).grid(row=0, column=3, sticky="e", pady=(0, 8))
         ttk.Label(inner, text="设备类型", style="Panel.TLabel").grid(
-            row=1, column=0, sticky="w", pady=4
+            row=1, column=0, sticky="w", pady=3
         )
         kind_combo = ttk.Combobox(
             inner, textvariable=self.elrs_kind, values=("TX", "RX"),
             state="readonly", width=10,
         )
-        kind_combo.grid(row=1, column=1, sticky="w", padx=(10, 20), pady=4)
-        kind_combo.bind("<<ComboboxSelected>>", lambda _e: self._refresh_elrs_envs())
+        kind_combo.grid(row=1, column=1, sticky="w", padx=(10, 20), pady=3)
+        kind_combo.bind("<<ComboboxSelected>>", lambda _e: self._on_elrs_kind_changed())
+        ttk.Label(inner, text="厂商", style="Panel.TLabel").grid(
+            row=1, column=2, sticky="w", pady=3
+        )
+        self.elrs_vendor_combo = ttk.Combobox(
+            inner, textvariable=self.elrs_vendor, values=(ELRS_MANUAL_MODE,),
+            state="readonly", width=26,
+        )
+        self.elrs_vendor_combo.grid(row=1, column=3, sticky="w", padx=(10, 0), pady=3)
+        self.elrs_vendor_combo.bind(
+            "<<ComboboxSelected>>", lambda _e: self._refresh_elrs_products()
+        )
         ttk.Label(inner, text="编译目标", style="Panel.TLabel").grid(
-            row=2, column=0, sticky="w", pady=4
+            row=2, column=0, sticky="w", pady=3
         )
         self.elrs_env_combo = ttk.Combobox(
             inner, textvariable=self.elrs_env, state="readonly", width=44
         )
-        self.elrs_env_combo.grid(row=2, column=1, sticky="w", padx=(10, 20), pady=4)
-        ttk.Button(
-            inner, text="读取编译目标", command=self.load_elrs_targets,
-            style="Primary.TButton",
-        ).grid(row=1, column=2, rowspan=2, sticky="w", pady=4)
+        self.elrs_env_combo.grid(row=2, column=1, sticky="w", padx=(10, 20), pady=3)
+        ttk.Label(inner, text="型号", style="Panel.TLabel").grid(
+            row=2, column=2, sticky="w", pady=3
+        )
+        self.elrs_product_combo = ttk.Combobox(
+            inner, textvariable=self.elrs_product, state="readonly", width=26
+        )
+        self.elrs_product_combo.grid(row=2, column=3, sticky="w", padx=(10, 0), pady=3)
+        self.elrs_product_combo.bind(
+            "<<ComboboxSelected>>", lambda _e: self._on_elrs_product_selected()
+        )
+        ttk.Label(
+            inner, textvariable=self.elrs_layout, style="Panel.TLabel",
+            foreground="#1565c0", wraplength=880,
+        ).grid(row=3, column=0, columnspan=4, sticky="w", pady=(6, 2))
         ttk.Label(
             inner,
             text="提示：PlatformIO 装在独立目录 tools\\pio-venv，不需要 VSCode；首次编译需联网下载工具链，请耐心等待。",
             style="Panel.TLabel", foreground="#b45309", wraplength=880,
-        ).grid(row=3, column=0, columnspan=4, sticky="w", pady=(10, 2))
+        ).grid(row=4, column=0, columnspan=4, sticky="w", pady=(4, 2))
         ttk.Label(inner, text="user_defines 常用配置", style="PanelTitle.TLabel").grid(
-            row=4, column=0, columnspan=4, sticky="w", pady=(12, 4)
+            row=5, column=0, columnspan=4, sticky="w", pady=(8, 4)
         )
         ttk.Label(inner, text="频段", style="Panel.TLabel").grid(
-            row=5, column=0, sticky="w", pady=3
+            row=6, column=0, sticky="w", pady=3
         )
         ttk.Combobox(
             inner, textvariable=self.elrs_domain,
             values=("默认", *elrs_backend.REGULATORY_DOMAINS),
             state="readonly", width=28,
-        ).grid(row=5, column=1, sticky="w", padx=(10, 20), pady=3)
+        ).grid(row=6, column=1, sticky="w", padx=(10, 20), pady=3)
         ttk.Label(inner, text="绑定短语", style="Panel.TLabel").grid(
-            row=5, column=2, sticky="w", pady=3
+            row=6, column=2, sticky="w", pady=3
         )
         ttk.Entry(inner, textvariable=self.elrs_binding, width=32).grid(
-            row=5, column=3, sticky="w", padx=(10, 0), pady=3
+            row=6, column=3, sticky="w", padx=(10, 0), pady=3
         )
         ttk.Checkbutton(
             inner, text="首次连接锁定", variable=self.elrs_lock,
             style="Panel.TCheckbutton",
-        ).grid(row=6, column=0, columnspan=2, sticky="w", pady=3)
+        ).grid(row=7, column=0, columnspan=2, sticky="w", pady=3)
         ttk.Button(
             inner, text="保存 user_defines", command=self.save_user_defines,
-        ).grid(row=6, column=2, sticky="w", pady=3)
+        ).grid(row=7, column=2, sticky="w", pady=3)
         ttk.Button(
             inner, text="打开 user_defines.txt", command=self.open_user_defines,
-        ).grid(row=6, column=3, sticky="w", pady=3)
+        ).grid(row=7, column=3, sticky="w", pady=3)
 
     def switch_system(self, name: str):
         is_elrs = name == "elrs"
@@ -1134,6 +1164,61 @@ class App:
             self.elrs_panel.grid(row=0, column=0, columnspan=2, sticky="w")
         else:
             self.elrs_panel.grid_remove()
+
+    def _load_hardware_catalog(self):
+        source = Path(self.elrs_source.get().strip())
+        self.elrs_hardware = elrs_backend.read_hardware_catalog(source, self.elrs_envs)
+        vendors = [ELRS_MANUAL_MODE, *sorted(self.elrs_hardware, key=str.upper)]
+        self.elrs_vendor_combo["values"] = vendors
+        if self.elrs_vendor.get() not in self.elrs_hardware:
+            self.elrs_vendor.set(ELRS_MANUAL_MODE)
+        products = [item for items in self.elrs_hardware.values() for item in items.values()]
+        buildable = sum(1 for item in products if item["envs"])
+        self.write_log(
+            f"ELRS 硬件目录: {len(self.elrs_hardware)} 厂商 / {len(products)} 型号，"
+            f"当前源码可编译 {buildable} 个"
+        )
+        self._refresh_elrs_products()
+
+    def _on_elrs_kind_changed(self):
+        if self.elrs_vendor.get() == ELRS_MANUAL_MODE:
+            self._refresh_elrs_envs()
+        else:
+            self._refresh_elrs_products()
+
+    def _refresh_elrs_products(self):
+        vendor = self.elrs_vendor.get()
+        if vendor == ELRS_MANUAL_MODE or vendor not in self.elrs_hardware:
+            self.elrs_product_combo["values"] = ()
+            self.elrs_product.set("")
+            self.elrs_layout.set("手动模式：可直接按 TX/RX 选择编译目标。")
+            self._refresh_elrs_envs()
+            return
+        items = {
+            label: item for label, item in self.elrs_hardware[vendor].items()
+            if item["kind"] == self.elrs_kind.get()
+        }
+        labels = sorted(items, key=str.upper)
+        self.elrs_product_combo["values"] = labels
+        if self.elrs_product.get() not in items:
+            self.elrs_product.set(labels[0] if labels else "")
+        self._on_elrs_product_selected()
+
+    def _on_elrs_product_selected(self):
+        item = self.elrs_hardware.get(self.elrs_vendor.get(), {}).get(self.elrs_product.get())
+        if not item:
+            self.elrs_layout.set(self.elrs_vendor.get() + "：该类型下暂无型号")
+            return
+        envs = item["envs"]
+        self.elrs_env_combo["values"] = envs
+        if self.elrs_env.get() not in envs:
+            self.elrs_env.set(envs[0] if envs else "")
+        methods = ", ".join(item["upload_methods"]) or "-"
+        text = (f"固件 {item['firmware']} | 布局 {item['layout'] or '-'} "
+                f"| 上传 {methods} | 平台 {item['platform']}")
+        if not envs:
+            text = "当前源码无对应编译目标（旧款专属 target）：" + text
+        self.elrs_layout.set(text)
 
     def _refresh_elrs_envs(self):
         envs = self.elrs_envs.get(self.elrs_kind.get(), [])
@@ -1579,6 +1664,16 @@ class App:
         if self.system.get() == "elrs":
             env = self.elrs_env.get()
             source = Path(self.elrs_source.get().strip())
+            product = self.elrs_hardware.get(self.elrs_vendor.get(), {}).get(
+                self.elrs_product.get()
+            )
+            if product is not None and not product["envs"]:
+                messagebox.showerror(
+                    "目标无效",
+                    "该型号属于旧款专属 target，当前 ELRS 源码没有对应编译目标；"
+                    "请切换到手动模式或选择其他型号。",
+                )
+                return
             if not env:
                 messagebox.showerror("目标无效", "请先点击读取编译目标，并选择一个编译目标。")
                 return
@@ -1679,6 +1774,7 @@ class App:
                 elif kind == "elrs_envs":
                     self.elrs_envs = json.loads(value)
                     self._refresh_elrs_envs()
+                    self._load_hardware_catalog()
                 elif kind == "log":
                     self.write_log(value)
                 else:
