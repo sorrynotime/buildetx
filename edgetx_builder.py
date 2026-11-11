@@ -33,6 +33,8 @@ from edgetx_backend import (
 # GUI application.
 
 DEFAULT_SOURCE = r"E:\Code\edgetx"
+DEFAULT_WINDOW_WIDTH = 980
+DEFAULT_WINDOW_HEIGHT = 900
 ELRS_MANUAL_MODE = "（手动选择目标）"
 DEFAULT_VS_SHELL = r"C:\ProgramData\Microsoft\Windows\Start Menu\Programs\Visual Studio\Visual Studio Tools\Developer PowerShell for VS.lnk"
 APP_NAME = "EdgeTX Builder"
@@ -86,7 +88,7 @@ class App:
         self.root = root
         self.root.title("EdgeTX Builder - Windows")
         self._set_window_icon()
-        self.root.geometry("980x856")
+        self.root.geometry(f"{DEFAULT_WINDOW_WIDTH}x{DEFAULT_WINDOW_HEIGHT}")
         self.root.resizable(False, False)
         self.events: queue.Queue[tuple[str, str]] = queue.Queue()
         self.busy = False
@@ -138,8 +140,8 @@ class App:
         self.module_widgets: dict[str, ttk.Checkbutton] = {}
         self.capabilities: set[str] = set()
         self.layout_vars: dict[str, tk.IntVar] = {
-            "window_width": tk.IntVar(value=980),
-            "window_height": tk.IntVar(value=856),
+            "window_width": tk.IntVar(value=DEFAULT_WINDOW_WIDTH),
+            "window_height": tk.IntVar(value=DEFAULT_WINDOW_HEIGHT),
             "outer_padding": tk.IntVar(value=10),
             "column_gap": tk.IntVar(value=5),
             "left_weight": tk.IntVar(value=1),
@@ -394,7 +396,9 @@ class App:
             for name, variable in self.layout_vars.items()
             if name != "window_width" and name != "window_height"
         }
-        self.root.geometry("980x856")
+        width = self._layout_value("window_width", DEFAULT_WINDOW_WIDTH)
+        height = self._layout_value("window_height", DEFAULT_WINDOW_HEIGHT)
+        self.root.geometry(f"{width}x{height}")
         self.outer.configure(padding=values["outer_padding"])
         self.panels.columnconfigure(0, weight=values["left_weight"])
         self.panels.columnconfigure(1, weight=values["right_weight"])
@@ -556,8 +560,8 @@ class App:
 
     def _reset_layout_params(self):
         defaults = {
-            "window_width": 980,
-            "window_height": 856,
+            "window_width": DEFAULT_WINDOW_WIDTH,
+            "window_height": DEFAULT_WINDOW_HEIGHT,
             "outer_padding": 10,
             "column_gap": 5,
             "left_weight": 1,
@@ -1038,91 +1042,91 @@ class App:
         self.log.configure(yscrollcommand=log_scroll.set)
 
     def _build_elrs_panel(self, panels):
-        panel, inner = self._make_rounded_panel(panels, "ExpressLRS 配置", 390)
+        panel, inner = self._make_rounded_panel(panels, "ExpressLRS 配置", 430)
         panel.configure(width=960)
         self.elrs_panel = panel
         self.elrs_frame = inner
         inner.columnconfigure(1, weight=1)
         ttk.Label(inner, text="ExpressLRS 配置", style="PanelTitle.TLabel").grid(
-            row=0, column=0, columnspan=3, sticky="w", pady=(0, 8)
+            row=0, column=0, columnspan=3, sticky="w", pady=(0, 12)
         )
         ttk.Button(
             inner, text="读取编译目标 / 型号", command=self.load_elrs_targets,
             style="Primary.TButton",
-        ).grid(row=0, column=3, sticky="e", pady=(0, 8))
+        ).grid(row=0, column=3, sticky="e", pady=(0, 12))
         ttk.Label(inner, text="设备类型", style="Panel.TLabel").grid(
-            row=1, column=0, sticky="w", pady=3
+            row=1, column=0, sticky="w", pady=6
         )
         kind_combo = ttk.Combobox(
             inner, textvariable=self.elrs_kind, values=("TX", "RX"),
             state="readonly", width=10,
         )
-        kind_combo.grid(row=1, column=1, sticky="w", padx=(10, 20), pady=3)
+        kind_combo.grid(row=1, column=1, sticky="w", padx=(10, 20), pady=6)
         kind_combo.bind("<<ComboboxSelected>>", lambda _e: self._on_elrs_kind_changed())
         ttk.Label(inner, text="厂商", style="Panel.TLabel").grid(
-            row=1, column=2, sticky="w", pady=3
+            row=1, column=2, sticky="w", pady=6
         )
         self.elrs_vendor_combo = ttk.Combobox(
             inner, textvariable=self.elrs_vendor, values=(ELRS_MANUAL_MODE,),
             state="readonly", width=26,
         )
-        self.elrs_vendor_combo.grid(row=1, column=3, sticky="w", padx=(10, 0), pady=3)
+        self.elrs_vendor_combo.grid(row=1, column=3, sticky="w", padx=(10, 0), pady=6)
         self.elrs_vendor_combo.bind(
             "<<ComboboxSelected>>", lambda _e: self._refresh_elrs_products()
         )
         ttk.Label(inner, text="编译目标", style="Panel.TLabel").grid(
-            row=2, column=0, sticky="w", pady=3
+            row=2, column=0, sticky="w", pady=6
         )
         self.elrs_env_combo = ttk.Combobox(
             inner, textvariable=self.elrs_env, state="readonly", width=44
         )
-        self.elrs_env_combo.grid(row=2, column=1, sticky="w", padx=(10, 20), pady=3)
+        self.elrs_env_combo.grid(row=2, column=1, sticky="w", padx=(10, 20), pady=6)
         ttk.Label(inner, text="型号", style="Panel.TLabel").grid(
-            row=2, column=2, sticky="w", pady=3
+            row=2, column=2, sticky="w", pady=6
         )
         self.elrs_product_combo = ttk.Combobox(
             inner, textvariable=self.elrs_product, state="readonly", width=26
         )
-        self.elrs_product_combo.grid(row=2, column=3, sticky="w", padx=(10, 0), pady=3)
+        self.elrs_product_combo.grid(row=2, column=3, sticky="w", padx=(10, 0), pady=6)
         self.elrs_product_combo.bind(
             "<<ComboboxSelected>>", lambda _e: self._on_elrs_product_selected()
         )
         ttk.Label(
             inner, textvariable=self.elrs_layout, style="Panel.TLabel",
             foreground="#1565c0", wraplength=880,
-        ).grid(row=3, column=0, columnspan=4, sticky="w", pady=(6, 2))
+        ).grid(row=3, column=0, columnspan=4, sticky="w", pady=(12, 6))
         ttk.Label(
             inner,
             text="提示：PlatformIO 装在独立目录 tools\\pio-venv，不需要 VSCode；首次编译需联网下载工具链，请耐心等待。",
             style="Panel.TLabel", foreground="#b45309", wraplength=880,
-        ).grid(row=4, column=0, columnspan=4, sticky="w", pady=(4, 2))
+        ).grid(row=4, column=0, columnspan=4, sticky="w", pady=(8, 4))
         ttk.Label(inner, text="user_defines 常用配置", style="PanelTitle.TLabel").grid(
-            row=5, column=0, columnspan=4, sticky="w", pady=(8, 4)
+            row=5, column=0, columnspan=4, sticky="w", pady=(14, 6)
         )
         ttk.Label(inner, text="频段", style="Panel.TLabel").grid(
-            row=6, column=0, sticky="w", pady=3
+            row=6, column=0, sticky="w", pady=6
         )
         ttk.Combobox(
             inner, textvariable=self.elrs_domain,
             values=("默认", *elrs_backend.REGULATORY_DOMAINS),
             state="readonly", width=28,
-        ).grid(row=6, column=1, sticky="w", padx=(10, 20), pady=3)
+        ).grid(row=6, column=1, sticky="w", padx=(10, 20), pady=6)
         ttk.Label(inner, text="绑定短语", style="Panel.TLabel").grid(
-            row=6, column=2, sticky="w", pady=3
+            row=6, column=2, sticky="w", pady=6
         )
         ttk.Entry(inner, textvariable=self.elrs_binding, width=32).grid(
-            row=6, column=3, sticky="w", padx=(10, 0), pady=3
+            row=6, column=3, sticky="w", padx=(10, 0), pady=6
         )
         ttk.Checkbutton(
             inner, text="首次连接锁定", variable=self.elrs_lock,
             style="Panel.TCheckbutton",
-        ).grid(row=7, column=0, columnspan=2, sticky="w", pady=3)
+        ).grid(row=7, column=0, columnspan=2, sticky="w", pady=6)
         ttk.Button(
             inner, text="保存 user_defines", command=self.save_user_defines,
-        ).grid(row=7, column=2, sticky="w", pady=3)
+        ).grid(row=7, column=2, sticky="w", pady=6)
         ttk.Button(
             inner, text="打开 user_defines.txt", command=self.open_user_defines,
-        ).grid(row=7, column=3, sticky="w", pady=3)
+        ).grid(row=7, column=3, sticky="w", pady=6)
 
     def switch_system(self, name: str):
         is_elrs = name == "elrs"
