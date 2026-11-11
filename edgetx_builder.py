@@ -106,6 +106,10 @@ class App:
         self.elrs_kind = tk.StringVar(value="TX")
         self.elrs_env = tk.StringVar(value="")
         self.elrs_envs: dict[str, list[str]] = {}
+        self.elrs_domain = tk.StringVar(value="默认")
+        self.elrs_binding = tk.StringVar(value="")
+        self.elrs_lock = tk.BooleanVar(value=False)
+        self.elrs_defines_loaded = False
         self.feature_vars = {
             option: tk.BooleanVar(value=default)
             for option, _, default in COMMON_FEATURES
@@ -1062,11 +1066,33 @@ class App:
             text="提示：PlatformIO 装在独立目录 tools\\pio-venv，不需要 VSCode；首次编译需联网下载工具链，请耐心等待。",
             style="Panel.TLabel", foreground="#b45309", wraplength=880,
         ).grid(row=3, column=0, columnspan=4, sticky="w", pady=(10, 2))
-        ttk.Label(
-            inner,
-            text="user_defines 常用配置（频段、绑定短语等）将在后续步骤提供。",
-            style="Panel.TLabel", foreground="#5f6368", wraplength=880,
-        ).grid(row=4, column=0, columnspan=4, sticky="w", pady=2)
+        ttk.Label(inner, text="user_defines 常用配置", style="PanelTitle.TLabel").grid(
+            row=4, column=0, columnspan=4, sticky="w", pady=(12, 4)
+        )
+        ttk.Label(inner, text="频段", style="Panel.TLabel").grid(
+            row=5, column=0, sticky="w", pady=3
+        )
+        ttk.Combobox(
+            inner, textvariable=self.elrs_domain,
+            values=("默认", *elrs_backend.REGULATORY_DOMAINS),
+            state="readonly", width=28,
+        ).grid(row=5, column=1, sticky="w", padx=(10, 20), pady=3)
+        ttk.Label(inner, text="绑定短语", style="Panel.TLabel").grid(
+            row=5, column=2, sticky="w", pady=3
+        )
+        ttk.Entry(inner, textvariable=self.elrs_binding, width=32).grid(
+            row=5, column=3, sticky="w", padx=(10, 0), pady=3
+        )
+        ttk.Checkbutton(
+            inner, text="首次连接锁定", variable=self.elrs_lock,
+            style="Panel.TCheckbutton",
+        ).grid(row=6, column=0, columnspan=2, sticky="w", pady=3)
+        ttk.Button(
+            inner, text="保存 user_defines", command=self.save_user_defines,
+        ).grid(row=6, column=2, sticky="w", pady=3)
+        ttk.Button(
+            inner, text="打开 user_defines.txt", command=self.open_user_defines,
+        ).grid(row=6, column=3, sticky="w", pady=3)
 
     def switch_system(self, name: str):
         is_elrs = name == "elrs"
@@ -1090,6 +1116,8 @@ class App:
                 padx=self.layout_vars["button_item_padx"].get(),
             )
         self._apply_system_visibility()
+        if is_elrs and not self.elrs_defines_loaded:
+            self.load_user_defines()
         self.status.set(
             "请选择 ELRS 源码目录，然后点击检查环境" if is_elrs
             else "请选择 EdgeTX 源码目录，然后点击检查环境"
@@ -1112,6 +1140,47 @@ class App:
         self.elrs_env_combo["values"] = envs
         if self.elrs_env.get() not in envs:
             self.elrs_env.set(envs[0] if envs else "")
+
+    def load_user_defines(self):
+        source = Path(self.elrs_source.get().strip())
+        if not elrs_backend.user_defines_path(source):
+            self.write_log("提示：未找到 user_defines.txt，请检查 ELRS 源码目录。")
+            return
+        values = elrs_backend.read_user_defines(source)
+        self.elrs_domain.set(str(values["domain"]))
+        self.elrs_binding.set(str(values["binding"]))
+        self.elrs_lock.set(bool(values["lock"]))
+        self.elrs_defines_loaded = True
+        self.write_log(f"user_defines: 频段={values['domain']}, 锁定={'开' if values['lock'] else '关'}")
+
+    def _apply_user_defines(self) -> bool:
+        source = Path(self.elrs_source.get().strip())
+        values = {
+            "domain": self.elrs_domain.get(),
+            "binding": self.elrs_binding.get(),
+            "lock": self.elrs_lock.get(),
+        }
+        ok, note = elrs_backend.write_user_defines(source, values)
+        self.write_log(("user_defines 已保存。" if ok else "失败：") + note)
+        return ok
+
+    def save_user_defines(self):
+        self.status.set("user_defines 已保存" if self._apply_user_defines()
+                        else "user_defines 保存失败")
+
+    def open_user_defines(self):
+        import os
+
+        source = Path(self.elrs_source.get().strip())
+        path = elrs_backend.user_defines_path(source)
+        if not path:
+            messagebox.showerror("缺少文件", "未找到 user_defines.txt。")
+            return
+        self._apply_user_defines()
+        try:
+            os.startfile(str(path))
+        except OSError as exc:
+            messagebox.showerror("打开失败", str(exc))
 
     def load_elrs_targets(self):
         source = Path(self.elrs_source.get().strip())
@@ -1171,6 +1240,8 @@ class App:
             value = filedialog.askdirectory(title="选择 ELRS 源码目录")
             if value:
                 self.elrs_source.set(value)
+                self.elrs_defines_loaded = False
+                self.load_user_defines()
                 self.load_elrs_targets()
             return
         value = filedialog.askdirectory(title="选择 EdgeTX 源码目录")
@@ -1510,6 +1581,9 @@ class App:
             source = Path(self.elrs_source.get().strip())
             if not env:
                 messagebox.showerror("目标无效", "请先点击读取编译目标，并选择一个编译目标。")
+                return
+            if not self._apply_user_defines():
+                messagebox.showerror("配置失败", "user_defines 保存失败，已取消编译。")
                 return
             self.run_async(lambda: self._elrs_build_worker(source, env))
             return

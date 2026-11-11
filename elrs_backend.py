@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import sys
 from pathlib import Path
 
@@ -172,11 +173,97 @@ def build_firmware(source: Path, env: str, on_line) -> tuple[bool, list[Path]]:
     return code == 0, artifacts
 
 
+REGULATORY_DOMAINS = (
+    "Regulatory_Domain_AU_915", "Regulatory_Domain_EU_868",
+    "Regulatory_Domain_IN_866", "Regulatory_Domain_AU_433",
+    "Regulatory_Domain_EU_433", "Regulatory_Domain_US_433",
+    "Regulatory_Domain_US_433_WIDE", "Regulatory_Domain_FCC_915",
+    "Regulatory_Domain_TH_920", "Regulatory_Domain_ISM_2400",
+    "Regulatory_Domain_EU_CE_2400",
+)
+
+
+def user_defines_path(source: Path) -> Path | None:
+    workdir = find_source(source)
+    if not workdir:
+        return None
+    path = workdir / "user_defines.txt"
+    return path if path.is_file() else None
+
+
+def read_user_defines(source: Path) -> dict[str, str | bool]:
+    """Read the common user_defines options without touching other lines."""
+    values: dict[str, str | bool] = {"domain": "默认", "binding": "", "lock": False}
+    path = user_defines_path(source)
+    if not path:
+        return values
+    for line in path.read_text(encoding="utf-8", errors="replace").splitlines():
+        match = re.match(r"^\s*(#?)\s*-D(\w+)(?:=(.*?))?\s*$", line)
+        if not match:
+            continue
+        commented, name, value = match.group(1), match.group(2), match.group(3) or ""
+        if commented:
+            continue
+        if name.startswith("Regulatory_Domain_"):
+            values["domain"] = name
+        elif name == "MY_BINDING_PHRASE":
+            values["binding"] = value.strip('"')
+        elif name == "LOCK_ON_FIRST_CONNECTION":
+            values["lock"] = True
+    return values
+
+
+def write_user_defines(source: Path, values: dict[str, str | bool]) -> tuple[bool, str]:
+    """Precisely toggle the common -D lines; keep every other line untouched."""
+    path = user_defines_path(source)
+    if not path:
+        return False, "未找到 user_defines.txt"
+    domain = str(values.get("domain", "默认"))
+    binding = str(values.get("binding", "")).strip().replace('"', "")
+    lock = bool(values.get("lock", False))
+    target_names = set(REGULATORY_DOMAINS) | {"MY_BINDING_PHRASE", "LOCK_ON_FIRST_CONNECTION"}
+    raw_lines = path.read_bytes().splitlines(keepends=True)
+    found: set[str] = set()
+    updated: list[bytes] = []
+    for raw in raw_lines:
+        eol = b"\r\n" if raw.endswith(b"\r\n") else (b"\n" if raw.endswith(b"\n") else b"")
+        body = raw.rstrip(b"\r\n").decode("utf-8", errors="replace")
+        match = re.match(r"^(\s*)(#?)\s*-D(\w+)(?:=(.*?))?\s*$", body)
+        if not match or match.group(3) not in target_names:
+            updated.append(raw)
+            continue
+        indent, _commented, name, _value = match.groups()
+        found.add(name)
+        if name.startswith("Regulatory_Domain_"):
+            enabled = name == domain
+            text = f"{indent}{'' if enabled else '#'}-D{name}"
+        elif name == "MY_BINDING_PHRASE":
+            if binding:
+                text = f'{indent}-DMY_BINDING_PHRASE="{binding}"'
+            else:
+                text = f"{indent}#-DMY_BINDING_PHRASE={_value or ''}"
+        else:
+            text = f"{indent}{'' if lock else '#'}-D{name}"
+        updated.append(text.encode("utf-8") + eol)
+    missing = sorted(target_names - found)
+    backup = path.with_suffix(".txt.bak")
+    if not backup.is_file():
+        backup.write_bytes(path.read_bytes())
+    path.write_bytes(b"".join(updated))
+    note = f"备份: {backup}"
+    if missing:
+        note += "；文件中缺少这些定义（未新增）: " + ", ".join(missing)
+    return True, note
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="ExpressLRS PlatformIO 后端")
-    parser.add_argument("command", choices=("check", "install", "list", "build"))
+    parser.add_argument("command", choices=("check", "install", "list", "build", "defines"))
     parser.add_argument("--source", default=DEFAULT_SOURCE)
     parser.add_argument("--env", default="")
+    parser.add_argument("--domain", choices=("默认", *REGULATORY_DOMAINS))
+    parser.add_argument("--binding")
+    parser.add_argument("--lock", choices=("on", "off"))
     args = parser.parse_args()
     source = Path(args.source)
 
@@ -196,6 +283,25 @@ def main() -> int:
             print(f"{kind} ({len(envs)}):")
             for env in envs:
                 print(f"  {env}")
+        return 0
+    if args.command == "defines":
+        values = read_user_defines(source)
+        changed = any(value is not None for value in (args.domain, args.binding, args.lock))
+        if changed:
+            if args.domain is not None:
+                values["domain"] = args.domain
+            if args.binding is not None:
+                values["binding"] = args.binding
+            if args.lock is not None:
+                values["lock"] = args.lock == "on"
+            ok, note = write_user_defines(source, values)
+            print(note)
+            if not ok:
+                return 1
+            values = read_user_defines(source)
+        print(f"domain  = {values['domain']}")
+        print(f"binding = {values['binding']}")
+        print(f"lock    = {'on' if values['lock'] else 'off'}")
         return 0
     if not args.env:
         print("build 需要 --env <目标名>")
