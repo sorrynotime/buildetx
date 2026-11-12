@@ -163,6 +163,67 @@ def clear_active_layout() -> None:
     save(settings)
 
 
+SOURCE_KEYS = {"edgetx": "edgetx_source", "elrs": "elrs_source"}
+SOURCE_DIR_NAMES = {"edgetx": ("edgetx",), "elrs": ("ExpressLRS",)}
+
+
+def is_source_dir(kind: str, path: Path) -> bool:
+    """Recognize a standard GitHub checkout of EdgeTX / ExpressLRS."""
+    if kind == "edgetx":
+        return ((path / "CMakeLists.txt").is_file()
+                and (path / "radio" / "src" / "CMakeLists.txt").is_file())
+    return ((path / "src" / "platformio.ini").is_file()
+            or (path / "platformio.ini").is_file())
+
+
+def saved_source(kind: str) -> Path | None:
+    key = SOURCE_KEYS.get(kind)
+    path = configured(key) if key else None
+    return path if path and path.is_dir() else None
+
+
+def save_source(kind: str, value: str | Path | None) -> None:
+    """Remember a chosen source directory; ignore incomplete/invalid input."""
+    key = SOURCE_KEYS.get(kind)
+    if not key:
+        return
+    text = str(value).strip() if value else ""
+    path = Path(text) if text else None
+    if path and is_source_dir(kind, path):
+        set_configured(key, path)
+
+
+def default_source(kind: str) -> str:
+    """Startup value: last chosen directory, else a checkout near the workspace."""
+    saved = saved_source(kind)
+    if saved:
+        return str(saved)
+    bases: list[Path] = []
+    for base in (workspace().parent, workspace().parent.parent, module_dir().parent):
+        if base not in bases:
+            bases.append(base)
+    candidates: list[Path] = []
+    for base in bases:
+        if not base.is_dir():
+            continue
+        try:
+            candidates.extend(
+                child for child in base.iterdir()
+                if child.is_dir() and not child.name.startswith(".")
+            )
+        except OSError:
+            continue
+    names = tuple(name.lower() for name in SOURCE_DIR_NAMES.get(kind, ()))
+    candidates.sort(key=lambda path: (path.name.lower() not in names, path.name.lower()))
+    for candidate in candidates:
+        if is_source_dir(kind, candidate):
+            return str(candidate)
+        nested = candidate / "ExpressLRS"
+        if kind == "elrs" and is_source_dir(kind, nested):
+            return str(nested)
+    return ""
+
+
 def paths() -> dict[str, Path | None]:
     return {
         "workspace": workspace(),

@@ -25,8 +25,6 @@ from pathlib import Path
 import app_settings
 from builder_utils import external_python, run_capture
 
-DEFAULT_SOURCE = r"E:\Code\ExpressLRS"
-
 
 def venv_dir() -> Path:
     return app_settings.pio_venv_dir()
@@ -706,7 +704,7 @@ def main() -> int:
         "check", "install", "list", "build", "defines", "hardware",
         "layout", "packages", "prefetch",
     ))
-    parser.add_argument("--source", default=DEFAULT_SOURCE)
+    parser.add_argument("--source", default=app_settings.default_source("elrs"))
     parser.add_argument("--env", default="")
     parser.add_argument("--domain", choices=("默认", *REGULATORY_DOMAINS))
     parser.add_argument("--binding")
@@ -714,6 +712,9 @@ def main() -> int:
     parser.add_argument("--vendor")
     parser.add_argument("--config", help="非交互硬件配置键路径，如 radiomaster.tx_2400.boxer")
     args = parser.parse_args()
+    if args.command != "install" and not args.source:
+        print("未找到 ELRS 源码目录：请用 --source 指定，或先在图形界面里选择一次。")
+        return 1
     source = Path(args.source)
 
     def on_line(line: str):

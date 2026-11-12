@@ -33,7 +33,6 @@ from edgetx_backend import (
 
 # GUI application.
 
-DEFAULT_SOURCE = r"E:\Code\edgetx"
 DEFAULT_WINDOW_WIDTH = 980
 DEFAULT_WINDOW_HEIGHT = 900
 ELRS_MANUAL_MODE = "（手动选择目标）"
@@ -96,7 +95,7 @@ class App:
         self.spinner_index = 0
         self.targets: dict[str, dict[str, dict[str, str]]] = {}
 
-        self.source = tk.StringVar(value=DEFAULT_SOURCE)
+        self.source = tk.StringVar(value=app_settings.default_source("edgetx"))
         self.vs_shell = tk.StringVar(value=DEFAULT_VS_SHELL)
         self.brand = tk.StringVar(value="Jumper")
         self.target = tk.StringVar(value="")
@@ -106,7 +105,7 @@ class App:
         self.build_dir = tk.StringVar(value="")
         self.status = tk.StringVar(value="请选择 EdgeTX 源码目录，然后点击检查环境")
         self.system = tk.StringVar(value="edgetx")
-        self.elrs_source = tk.StringVar(value=elrs_backend.DEFAULT_SOURCE)
+        self.elrs_source = tk.StringVar(value=app_settings.default_source("elrs"))
         self.elrs_kind = tk.StringVar(value="TX")
         self.elrs_env = tk.StringVar(value="")
         self.elrs_envs: dict[str, list[str]] = {}
@@ -119,6 +118,12 @@ class App:
         self.elrs_layout = tk.StringVar(value="")
         self.elrs_artifact = tk.StringVar(value="")
         self.elrs_hardware: dict[str, dict[str, dict]] = {}
+        self.source.trace_add(
+            "write", lambda *_: app_settings.save_source("edgetx", self.source.get())
+        )
+        self.elrs_source.trace_add(
+            "write", lambda *_: app_settings.save_source("elrs", self.elrs_source.get())
+        )
         self.feature_vars = {
             option: tk.BooleanVar(value=default)
             for option, _, default in COMMON_FEATURES
