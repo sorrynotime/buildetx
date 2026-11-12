@@ -1,6 +1,6 @@
-"""EdgeTX Builder for Windows.
+"""Open Radio Builder for Windows.
 
-Single-file application for configuring and building EdgeTX targets.
+Desktop builder for EdgeTX and ExpressLRS firmware.
 """
 
 from __future__ import annotations
@@ -38,7 +38,7 @@ DEFAULT_WINDOW_WIDTH = 980
 DEFAULT_WINDOW_HEIGHT = 900
 ELRS_MANUAL_MODE = "（手动选择目标）"
 DEFAULT_VS_SHELL = r"C:\ProgramData\Microsoft\Windows\Start Menu\Programs\Visual Studio\Visual Studio Tools\Developer PowerShell for VS.lnk"
-APP_NAME = "EdgeTX Builder"
+APP_NAME = "Open Radio Builder"
 APP_VERSION = "1.0"
 APP_AUTHOR = "大魔王~"
 APP_EMAIL = "13471217561@163.com"
@@ -87,7 +87,7 @@ HARDWARE_CHOICES = {
 class App:
     def __init__(self, root: tk.Tk):
         self.root = root
-        self.root.title("EdgeTX Builder - Windows")
+        self.root.title("Open Radio Builder - Windows")
         self._set_window_icon()
         self.root.geometry(f"{DEFAULT_WINDOW_WIDTH}x{DEFAULT_WINDOW_HEIGHT}")
         self.root.resizable(False, False)
@@ -218,7 +218,7 @@ class App:
         self.root.after(180, self.spinner_tick)
 
     def _set_window_icon(self):
-        icon = resource_path("edgetx_tx.ico")
+        icon = resource_path("open_radio_builder.ico")
         if icon.is_file():
             try:
                 self.root.iconbitmap(default=str(icon))
@@ -1455,7 +1455,8 @@ class App:
         self.system.set(name)
         for key, button in self.system_buttons.items():
             button.configure(style="Primary.TButton" if key == name else "TButton")
-        self.root.title("ExpressLRS Builder - Windows" if is_elrs else "EdgeTX Builder - Windows")
+        suffix = "ExpressLRS" if is_elrs else "EdgeTX"
+        self.root.title(f"Open Radio Builder - {suffix}")
         self.source_label.configure(text="ELRS 源码目录" if is_elrs else "EdgeTX 源码目录")
         self.source_entry.configure(textvariable=self.elrs_source if is_elrs else self.source)
         for widget in (self.vs_label, self.vs_entry, self.vs_button):

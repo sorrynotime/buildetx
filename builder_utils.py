@@ -1,4 +1,4 @@
-"""Shared process and resource helpers for EdgeTX Builder backends."""
+"""Shared process and resource helpers for Open Radio Builder backends."""
 
 from __future__ import annotations
 

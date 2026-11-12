@@ -12,7 +12,8 @@ import os
 import sys
 from pathlib import Path
 
-APP_DIR_NAME = "EdgeTXBuilder"
+APP_DIR_NAME = "OpenRadioBuilder"
+LEGACY_APP_DIR_NAME = "EdgeTXBuilder"
 SETTINGS_FILE = "settings.json"
 
 
@@ -22,8 +23,19 @@ def module_dir() -> Path:
     return Path(__file__).resolve().parent
 
 
+def portable_root() -> Path | None:
+    """Detect a development/portable folder that already has tools/pio-venv."""
+    for base in (module_dir(), module_dir().parent):
+        if (base / "tools" / "pio-venv").is_dir():
+            return base
+    return None
+
+
 def default_workspace() -> Path:
     if getattr(sys, "frozen", False):
+        portable = portable_root()
+        if portable:
+            return portable
         base = os.environ.get("LOCALAPPDATA") or str(Path.home() / "AppData" / "Local")
         return Path(base) / APP_DIR_NAME
     return module_dir()
@@ -36,12 +48,28 @@ def settings_file() -> Path:
     return default_workspace() / SETTINGS_FILE
 
 
+def legacy_settings_file() -> Path | None:
+    base = os.environ.get("APPDATA")
+    if not base:
+        return None
+    return Path(base) / LEGACY_APP_DIR_NAME / SETTINGS_FILE
+
+
 def load() -> dict:
-    try:
-        data = json.loads(settings_file().read_text(encoding="utf-8"))
-    except (OSError, ValueError):
-        return {}
-    return data if isinstance(data, dict) else {}
+    path = settings_file()
+    for candidate in (path, legacy_settings_file()):
+        if candidate is None or not candidate.is_file():
+            continue
+        try:
+            data = json.loads(candidate.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            continue
+        if not isinstance(data, dict):
+            continue
+        if candidate != path:
+            save(data)
+        return data
+    return {}
 
 
 def save(data: dict) -> None:
@@ -88,6 +116,9 @@ def pio_venv_dir() -> Path:
     legacy = module_dir() / "tools" / "pio-venv"
     if legacy.is_dir():
         return legacy
+    workspace_tools = workspace() / "tools" / "pio-venv"
+    if workspace_tools.is_dir():
+        return workspace_tools
     return workspace() / "pio-venv"
 
 

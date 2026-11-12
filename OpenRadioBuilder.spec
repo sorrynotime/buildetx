@@ -2,10 +2,10 @@
 
 
 a = Analysis(
-    ['edgetx_builder.py'],
+    ['open_radio_builder.py'],
     pathex=[],
     binaries=[],
-    datas=[('edgetx_tx.ico', '.')],
+    datas=[('open_radio_builder.ico', '.')],
     hiddenimports=[],
     hookspath=[],
     hooksconfig={},
@@ -22,7 +22,7 @@ exe = EXE(
     a.binaries,
     a.datas,
     [],
-    name='EdgeTX_Builder',
+    name='OpenRadioBuilder',
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,
@@ -35,5 +35,5 @@ exe = EXE(
     target_arch=None,
     codesign_identity=None,
     entitlements_file=None,
-    icon=['edgetx_tx.ico'],
+    icon=['open_radio_builder.ico'],
 )
