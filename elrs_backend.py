@@ -16,6 +16,8 @@ import argparse
 import json
 import os
 import re
+import shutil
+import struct
 import subprocess
 import time
 from pathlib import Path
@@ -326,6 +328,110 @@ def read_layout_config(source: Path, config_path: str) -> dict:
             "value": value, "source": source,
         }
     result["entries"] = sorted(entries.values(), key=lambda item: item["key"])
+    return result
+
+
+CONFIG_HEADER_SIZE = 128 + 16 + 512
+CONFIG_LAYOUT_SIZE = 2048
+
+
+def firmware_layout_offset(stream) -> int:
+    """Offset of the 2048-byte layout area in an ESP firmware image."""
+    stream.seek(0)
+    magic, segments, *_ = struct.unpack("<BBBBI", stream.read(8))
+    if magic != 0xE9:
+        raise ValueError("不是有效的 ESP 固件（magic 不匹配）")
+    is8285 = False
+    if segments == 2:
+        stream.seek(0x1000)
+        _magic, segments, *_ = struct.unpack("<BBBBI", stream.read(8))
+        is8285 = True
+    else:
+        stream.seek(24)
+    for _ in range(segments):
+        _address, size = struct.unpack("<II", stream.read(8))
+        stream.seek(size, 1)
+    position = (stream.tell() + 16) & ~15
+    if not is8285:
+        position += 32
+    return position + CONFIG_HEADER_SIZE
+
+
+def encode_layout(values: dict) -> bytes:
+    return json.dumps(values).encode()
+
+
+def parse_layout_input(text: str, original) -> object:
+    """Parse a table cell back into the original JSON type."""
+    raw = text.strip()
+    if isinstance(original, bool):
+        if raw.lower() in ("true", "1", "yes", "on"):
+            return True
+        if raw.lower() in ("false", "0", "no", "off"):
+            return False
+        raise ValueError("布尔值请输入 true / false")
+    if isinstance(original, int):
+        return int(raw)
+    if isinstance(original, float):
+        return float(raw)
+    if isinstance(original, list):
+        parts = [part.strip() for part in raw.split(",") if part.strip()]
+        sample = original[0] if original else 0
+        if isinstance(sample, bool):
+            return [part.lower() in ("true", "1", "yes", "on") for part in parts]
+        if isinstance(sample, float):
+            return [float(part) for part in parts]
+        if isinstance(sample, int):
+            return [int(part) for part in parts]
+        return parts
+    return text
+
+
+def validate_layout(values: dict) -> tuple[bool, str]:
+    try:
+        data = encode_layout(values)
+    except (TypeError, ValueError) as exc:
+        return False, str(exc)
+    if len(data) > CONFIG_LAYOUT_SIZE:
+        return False, f"配置序列化后 {len(data)} 字节，超过 ELRS 限制 {CONFIG_LAYOUT_SIZE} 字节"
+    return True, ""
+
+
+def _slug(text: str) -> str:
+    return re.sub(r"[^A-Za-z0-9_.-]+", "_", str(text)).strip("_")[:80] or "custom"
+
+
+def write_layout_override(
+    source: Path, env: str, product_name: str, values: dict
+) -> dict:
+    """S2: write a config copy and a firmware copy, never touching originals."""
+    result = {"json": None, "bin": None, "bytes": 0, "warning": ""}
+    ok, message = validate_layout(values)
+    if not ok:
+        result["warning"] = message
+        return result
+    data = encode_layout(values)
+    overrides = app_settings.overrides_dir()
+    overrides.mkdir(parents=True, exist_ok=True)
+    json_path = overrides / f"{_slug(product_name)}.layout.json"
+    json_path.write_text(
+        json.dumps(values, ensure_ascii=False, indent=2), encoding="utf-8"
+    )
+    result["json"] = str(json_path)
+    result["bytes"] = len(data)
+    build = artifacts_dir(source, env)
+    firmware = build / "firmware.bin" if build else None
+    if not firmware or not firmware.is_file():
+        result["warning"] = "尚未找到已编译的 firmware.bin，只生成了配置副本；编译后可再次保存生成固件副本。"
+        return result
+    output = app_settings.output_dir()
+    output.mkdir(parents=True, exist_ok=True)
+    custom = output / f"{_slug(product_name)}.{_slug(env)}.custom.bin"
+    shutil.copy2(firmware, custom)
+    with custom.open("r+b") as stream:
+        stream.seek(firmware_layout_offset(stream))
+        stream.write(data + b"\0" * (CONFIG_LAYOUT_SIZE - len(data)))
+    result["bin"] = str(custom)
     return result
 
 

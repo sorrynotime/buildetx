@@ -1223,10 +1223,17 @@ class App:
         if not info["entries"]:
             messagebox.showinfo("无配置", info["warning"] or "该型号没有可显示的 layout 配置。")
             return
+        self.layout_info = info
+        self.layout_values = {entry["key"]: entry["value"] for entry in info["entries"]}
+        self.layout_original = dict(self.layout_values)
+        self.layout_edits: set[str] = set()
+        self.layout_status = tk.StringVar(
+            value="双击表格行编辑数值；保存时会生成配置副本与固件副本，不改动原 layout 文件和原固件。"
+        )
         window = tk.Toplevel(self.root)
         self.layout_viewer_window = window
-        window.title(f"硬件配置（只读）- {info['product_name']}")
-        window.geometry("760x560")
+        window.title(f"硬件配置 - {info['product_name']}")
+        window.geometry("760x590")
         body = ttk.Frame(window, padding=10)
         body.pack(fill="both", expand=True)
         overlay_count = sum(1 for entry in info["entries"] if "overlay" in entry["source"])
@@ -1234,7 +1241,7 @@ class App:
         ttk.Label(body, text=f"layout 文件: {info['layout_file']}").pack(anchor="w")
         ttk.Label(
             body,
-            text=f"条目: {len(info['entries'])}（其中 overlay 覆盖 {overlay_count} 项）；显示的是最终生效值",
+            text=f"条目: {len(info['entries'])}（其中 overlay 覆盖 {overlay_count} 项）；显示最终生效值",
         ).pack(anchor="w", pady=(0, 6))
         ttk.Label(body, text="搜索字段").pack(anchor="w")
         search_var = tk.StringVar()
@@ -1245,7 +1252,7 @@ class App:
         tree = ttk.Treeview(frame, columns=columns, show="headings", height=18)
         for column, text, width in (
             ("key", "字段", 220), ("type", "类型", 80),
-            ("value", "当前值", 280), ("source", "来源", 140),
+            ("value", "当前值", 280), ("source", "来源 / 状态", 140),
         ):
             tree.heading(column, text=text)
             tree.column(column, width=width, anchor="w")
@@ -1253,6 +1260,7 @@ class App:
         tree.configure(yscrollcommand=scroll.set)
         tree.pack(side="left", fill="both", expand=True)
         scroll.pack(side="right", fill="y")
+        tree.bind("<Double-1>", lambda _event: self._edit_layout_value())
         self.layout_tree = tree
 
         def display(value):
@@ -1271,19 +1279,92 @@ class App:
             for entry in info["entries"]:
                 if needle and needle not in entry["key"].lower():
                     continue
+                key = entry["key"]
+                status = "已编辑" if key in self.layout_edits else entry["source"]
                 tree.insert("", "end", values=(
-                    entry["key"], entry["type"], display(entry["value"]), entry["source"]
+                    key, type(self.layout_values[key]).__name__,
+                    display(self.layout_values[key]), status,
                 ))
 
+        self.layout_display = display
+        self.layout_refresh = refresh
         search_var.trace_add("write", refresh)
         refresh()
         ttk.Label(
-            body,
-            text="S1 只读预览：后续步骤提供编辑、校验与配置副本生成，不会改动原 layout 文件。",
-            foreground="#b45309", wraplength=720,
-        ).pack(anchor="w", pady=(8, 4))
-        ttk.Button(body, text="关闭", command=window.destroy).pack(anchor="e")
+            body, textvariable=self.layout_status, foreground="#b45309",
+            wraplength=720, justify="left",
+        ).pack(anchor="w", fill="x", pady=(8, 4))
+        actions = ttk.Frame(body)
+        actions.pack(anchor="e")
+        ttk.Button(
+            actions, text="保存配置副本", command=self.save_layout_override,
+            style="Primary.TButton",
+        ).pack(side="left", padx=(0, 6))
+        ttk.Button(actions, text="关闭", command=window.destroy).pack(side="left")
         self.layout_search = search_var
+
+    def _edit_layout_value(self):
+        selection = self.layout_tree.selection()
+        if not selection:
+            return
+        key = str(self.layout_tree.item(selection[0], "values")[0])
+        original = self.layout_original[key]
+        editor = tk.Toplevel(self.layout_viewer_window)
+        editor.title(f"编辑 - {key}")
+        editor.transient(self.layout_viewer_window)
+        editor.geometry("440x180")
+        frame = ttk.Frame(editor, padding=12)
+        frame.pack(fill="both", expand=True)
+        ttk.Label(frame, text=f"字段: {key}    类型: {type(original).__name__}").pack(anchor="w")
+        value = tk.StringVar(value=self.layout_display(self.layout_values[key]))
+        entry = ttk.Entry(frame, textvariable=value, width=48)
+        entry.pack(fill="x", pady=8)
+        entry.focus_set()
+        ttk.Label(frame, text="数组用逗号分隔；布尔值用 true / false", foreground="#5f6368").pack(anchor="w")
+
+        def apply():
+            try:
+                parsed = elrs_backend.parse_layout_input(value.get(), original)
+            except (ValueError, TypeError) as exc:
+                messagebox.showerror("输入无效", str(exc), parent=editor)
+                return
+            self.layout_values[key] = parsed
+            self.layout_edits.add(key)
+            ok, msg = elrs_backend.validate_layout(self.layout_values)
+            self.layout_status.set(
+                f"{key} 已修改，尚未保存副本。" if ok else f"配置无效: {msg}"
+            )
+            self.layout_refresh()
+            editor.destroy()
+
+        ttk.Button(frame, text="确定", command=apply).pack(side="right", padx=(6, 0))
+        ttk.Button(frame, text="取消", command=editor.destroy).pack(side="right")
+
+    def save_layout_override(self):
+        if not getattr(self, "layout_values", None):
+            return
+        ok, message = elrs_backend.validate_layout(self.layout_values)
+        if not ok:
+            messagebox.showerror("配置无效", message)
+            return
+        source = Path(self.elrs_source.get().strip())
+        result = elrs_backend.write_layout_override(
+            source, self.elrs_env.get(),
+            self.layout_info["product_name"], self.layout_values,
+        )
+        if not result["json"]:
+            messagebox.showerror("保存失败", result["warning"])
+            return
+        lines = [f"配置副本: {result['json']}（{result['bytes']} 字节）"]
+        if result["bin"]:
+            lines.append(f"固件副本: {result['bin']}")
+        if result["warning"]:
+            lines.append(result["warning"])
+        text = "\n".join(lines)
+        self.layout_status.set(text)
+        self.write_log("硬件配置副本已生成：\n" + text)
+        if result["bin"]:
+            self.elrs_artifact.set(result["bin"])
 
     def switch_system(self, name: str):
         is_elrs = name == "elrs"
