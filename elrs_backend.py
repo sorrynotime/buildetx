@@ -18,6 +18,7 @@ import os
 import re
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 from builder_utils import external_python, run_capture
@@ -153,6 +154,12 @@ def list_envs(source: Path) -> dict[str, list[str]]:
     return {kind: sorted(envs) for kind, envs in groups.items() if envs}
 
 
+FILE_LOCK_MARKERS = (
+    "WinError 32", "SHFileOperationW", "另一个程序正在使用此文件",
+    "being used by another process",
+)
+
+
 def build_firmware(
     source: Path, env: str, on_line, config: str | None = None
 ) -> tuple[bool, list[Path]]:
@@ -172,10 +179,19 @@ def build_firmware(
         child_env.pop("ELRS_UNIFIED_CONFIG", None)
         on_line("未选择硬件配置，生成 bare 固件（之后可用 Web UI 配置）")
     on_line(f"开始编译 {env}（首次编译需联网下载工具链，可能耗时较长）...")
-    code, _ = run_capture(
-        [python, "-m", "platformio", "run", "-e", env], cwd=workdir, on_line=on_line,
-        env=child_env, stdin=subprocess.PIPE,
-    )
+    command = [python, "-m", "platformio", "run", "-e", env]
+    attempts = 3
+    for attempt in range(1, attempts + 1):
+        code, output = run_capture(
+            command, cwd=workdir, on_line=on_line,
+            env=child_env, stdin=subprocess.PIPE,
+        )
+        if code == 0 or attempt == attempts or not any(
+            marker in output for marker in FILE_LOCK_MARKERS
+        ):
+            break
+        on_line(f"检测到固件文件被占用，2 秒后自动重试（{attempt}/{attempts - 1}）...")
+        time.sleep(2)
     build_dir = workdir / ".pio" / "build" / env
     artifacts = sorted(
         path for path in build_dir.glob("firmware.*")

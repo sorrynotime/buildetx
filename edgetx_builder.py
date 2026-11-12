@@ -1277,8 +1277,6 @@ class App:
             messagebox.showerror("目录无效", "请选择包含 platformio.ini 的 ELRS 源码目录（根目录或 src 子目录）。")
             return
 
-        self.busy = True
-
         def worker():
             self.events.put(("busy", "1"))
             self.events.put(("status", "正在读取 ELRS 编译目标..."))
@@ -1476,7 +1474,19 @@ class App:
         self.status.set("日志已清除")
 
     def run_async(self, fn):
-        threading.Thread(target=fn, daemon=True).start()
+        if self.busy:
+            messagebox.showinfo("正在执行", "已有任务在运行，请等待完成后再操作。")
+            return False
+        self.busy = True
+
+        def wrapper():
+            try:
+                fn()
+            finally:
+                self.events.put(("busy", "0"))
+
+        threading.Thread(target=wrapper, daemon=True).start()
+        return True
 
     def spinner_tick(self):
         if self.busy:
