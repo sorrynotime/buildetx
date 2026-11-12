@@ -37,6 +37,11 @@ def pio_env() -> dict[str, str]:
     core = app_settings.pio_core_dir()
     if core:
         env["PLATFORMIO_CORE_DIR"] = str(core)
+    if os.name == "nt":
+        # Python 3.15 enables UTF-8 mode by default, but PlatformIO's
+        # elf2bin.py decodes objdump output with the locale encoding on
+        # Chinese Windows. Disable UTF-8 mode for the whole toolchain.
+        env["PYTHONUTF8"] = "0"
     return env
 
 
@@ -76,10 +81,14 @@ def find_source(source: Path) -> Path | None:
 
 def check_environment(source: Path, on_line) -> bool:
     ok = True
-    python = external_python()
+    python = pio_python()
     if python:
-        code, output = run_capture([python, "--version"])
+        code, output = run_capture([python, "--version"], env=pio_env())
         on_line(f"{'OK' if code == 0 else '缺失'} Python: {output} ({python})")
+        match = re.search(r"Python (\d+)\.(\d+)", output)
+        if match and (int(match.group(1)), int(match.group(2))) >= (3, 15):
+            on_line("提示 Python 3.15+ 默认开启 UTF-8 模式，可能导致 ELRS 生成 BIN 时解码失败。")
+            on_line("     工具已自动设置 PYTHONUTF8=0 规避；建议改用 Python 3.13 及以下。")
     else:
         on_line("缺失 Python: 请先安装 Python 并加入 PATH。")
         ok = False
