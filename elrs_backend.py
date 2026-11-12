@@ -459,6 +459,19 @@ def write_layout_override(
     return result
 
 
+def to_tx_env(env: str) -> str:
+    """RX-as-TX: use the matching TX firmware for the same upload method."""
+    return re.sub(r"_RX(?=_via_|$)", "_TX", env)
+
+
+def rx_as_tx_values(values: dict) -> dict:
+    """Internal (full-duplex) RX-as-TX: keep two serial pins, rename led."""
+    result = dict(values)
+    if "led" in result and "led_red" not in result:
+        result["led_red"] = result.pop("led")
+    return result
+
+
 def apply_active_layout(source: Path, env: str, config_path: str) -> dict | None:
     """S3: regenerate the firmware copy using the active config override."""
     active = app_settings.active_layout()
@@ -472,6 +485,9 @@ def apply_active_layout(source: Path, env: str, config_path: str) -> dict | None
         values = json.loads(json_path.read_text(encoding="utf-8"))
     except (OSError, ValueError) as exc:
         return {"json": None, "bin": None, "bytes": 0, "warning": str(exc)}
+    if active.get("rx_as_tx"):
+        values = rx_as_tx_values(values)
+        env = to_tx_env(env)
     return write_layout_override(
         source, env, str(active.get("product", "custom")), values,
         active.get("device_name"),

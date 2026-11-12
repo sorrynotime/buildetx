@@ -1260,6 +1260,17 @@ class App:
             device_row, text="最多 16 字节，写入固件尾部后由 Lua 读取",
             foreground="#5f6368",
         ).pack(side="left")
+        rx_row = ttk.Frame(body)
+        rx_row.pack(fill="x", pady=(0, 6))
+        active_match = bool(active and active.get("config") == item["config"])
+        self.layout_rx_as_tx = tk.BooleanVar(
+            value=bool(active_match and active.get("rx_as_tx"))
+        )
+        ttk.Checkbutton(
+            rx_row,
+            text="刷写接收机作为发射器（仅限 full-duplex 内部模块）",
+            variable=self.layout_rx_as_tx,
+        ).pack(side="left")
         ttk.Label(body, text="搜索字段").pack(anchor="w")
         search_var = tk.StringVar()
         ttk.Entry(body, textvariable=search_var).pack(fill="x", pady=(2, 6))
@@ -1372,9 +1383,13 @@ class App:
             return
         source = Path(self.elrs_source.get().strip())
         device_name = self.layout_device_name.get().strip() or None
+        rx_as_tx = self.layout_rx_as_tx.get()
+        values = (elrs_backend.rx_as_tx_values(self.layout_values)
+                  if rx_as_tx else self.layout_values)
+        env = (elrs_backend.to_tx_env(self.elrs_env.get())
+               if rx_as_tx else self.elrs_env.get())
         result = elrs_backend.write_layout_override(
-            source, self.elrs_env.get(),
-            self.layout_info["product_name"], self.layout_values, device_name,
+            source, env, self.layout_info["product_name"], values, device_name,
         )
         if not result["json"]:
             messagebox.showerror("保存失败", result["warning"])
@@ -1383,10 +1398,13 @@ class App:
             "config": self.layout_config,
             "product": self.layout_info["product_name"],
             "json": result["json"],
-            "env": self.elrs_env.get(),
+            "env": env,
             "device_name": device_name or "",
+            "rx_as_tx": rx_as_tx,
         })
         lines = [f"配置副本: {result['json']}（{result['bytes']} 字节）"]
+        if rx_as_tx:
+            lines.append(f"RX 当 TX（full-duplex）: 使用 {env} 固件")
         if device_name:
             lines.append(f"Lua 设备名: {device_name}")
         if result["bin"]:
