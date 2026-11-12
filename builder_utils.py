@@ -19,19 +19,26 @@ def _subprocess_creationflags() -> int:
     return 0
 
 
-def run_capture(args: list[str], cwd: Path | None = None, on_line=None) -> tuple[int, str]:
+def run_capture(
+    args: list[str], cwd: Path | None = None, on_line=None,
+    env: dict[str, str] | None = None, stdin=None,
+) -> tuple[int, str]:
     try:
         creationflags = _subprocess_creationflags()
         if on_line is None:
             p = subprocess.run(
                 args, cwd=cwd, stdout=subprocess.PIPE,
                 stderr=subprocess.STDOUT, creationflags=creationflags,
+                env=env, stdin=stdin,
             )
             return p.returncode, _decode(p.stdout or b"").strip()
         p = subprocess.Popen(
             args, cwd=cwd, stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT, creationflags=creationflags,
+            env=env, stdin=stdin,
         )
+        if p.stdin is not None:
+            p.stdin.close()
         lines = []
         assert p.stdout is not None
         for raw_line in iter(p.stdout.readline, b""):

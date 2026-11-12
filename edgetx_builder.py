@@ -14,6 +14,7 @@ import tkinter as tk
 from pathlib import Path
 from tkinter import filedialog, messagebox, ttk
 
+import app_settings
 import elrs_backend
 from builder_utils import external_python, resource_path, run_capture
 from edgetx_backend import (
@@ -116,6 +117,7 @@ class App:
         self.elrs_vendor = tk.StringVar(value=ELRS_MANUAL_MODE)
         self.elrs_product = tk.StringVar(value="")
         self.elrs_layout = tk.StringVar(value="")
+        self.elrs_artifact = tk.StringVar(value="")
         self.elrs_hardware: dict[str, dict[str, dict]] = {}
         self.feature_vars = {
             option: tk.BooleanVar(value=default)
@@ -202,6 +204,8 @@ class App:
             "log_pad_y": tk.IntVar(value=1),
         }
         self.layout_debug_window: tk.Toplevel | None = None
+        self.settings_window: tk.Toplevel | None = None
+        self.layout_viewer_window: tk.Toplevel | None = None
 
         self._setup_theme()
         self._build_ui()
@@ -750,6 +754,9 @@ class App:
             )
             button.pack(side="left", padx=3)
             self.system_buttons[name] = button
+        ttk.Button(
+            system_row, text="路径设置", command=self.open_settings,
+        ).pack(side="right", padx=(10, 0))
         row += 1
         self.source_label = ttk.Label(outer, text="EdgeTX 源码目录")
         self.source_label.grid(row=row, column=0, sticky="w", pady=4)
@@ -1127,6 +1134,319 @@ class App:
         ttk.Button(
             inner, text="打开 user_defines.txt", command=self.open_user_defines,
         ).grid(row=7, column=3, sticky="w", pady=6)
+        ttk.Button(
+            inner, text="打开产物目录", command=self.open_elrs_artifact_dir,
+            style="Primary.TButton",
+        ).grid(row=8, column=0, sticky="w", pady=(10, 6))
+        ttk.Label(
+            inner, textvariable=self.elrs_artifact, style="Panel.TLabel",
+            foreground="#5f6368", wraplength=520,
+        ).grid(row=8, column=1, columnspan=2, sticky="w", padx=(10, 0), pady=(10, 6))
+        ttk.Button(
+            inner, text="查看硬件配置", command=self.open_layout_viewer,
+        ).grid(row=8, column=3, sticky="e", pady=(10, 6))
+
+    def open_settings(self):
+        if self.settings_window and self.settings_window.winfo_exists():
+            self.settings_window.deiconify()
+            self.settings_window.lift()
+            return
+        window = tk.Toplevel(self.root)
+        self.settings_window = window
+        window.title("数据目录设置")
+        window.transient(self.root)
+        window.geometry("680x400")
+        body = ttk.Frame(window, padding=12)
+        body.pack(fill="both", expand=True)
+        ttk.Label(
+            body,
+            text="打包成 exe 后程序目录可能只读，以下目录均可由用户选择；改动后 PlatformIO 可能需要重新安装或重新下载工具链。",
+            wraplength=640, justify="left",
+        ).pack(anchor="w", pady=(0, 10))
+        summary = tk.StringVar()
+
+        def refresh():
+            values = app_settings.paths()
+            core = values["pio_core"] or "PlatformIO 默认位置（用户目录 .platformio）"
+            summary.set(
+                f"数据工作目录: {values['workspace']}\n"
+                f"PlatformIO 虚拟环境: {values['pio_venv']}\n"
+                f"PlatformIO 工具链缓存: {core}\n"
+                f"配置副本目录: {values['overrides']}\n"
+                f"固件副本目录: {values['output']}"
+            )
+
+        ttk.Label(body, textvariable=summary, justify="left", wraplength=640).pack(
+            anchor="w", fill="x"
+        )
+        core_enabled = tk.BooleanVar(value=app_settings.pio_core_enabled())
+
+        def toggle_core():
+            app_settings.set_pio_core_enabled(core_enabled.get())
+            refresh()
+
+        ttk.Checkbutton(
+            body, text="使用自定义 PlatformIO 工具链缓存目录（会重新下载）",
+            variable=core_enabled, command=toggle_core,
+        ).pack(anchor="w", pady=(12, 4))
+        buttons = ttk.Frame(body)
+        buttons.pack(anchor="w", pady=(12, 0))
+
+        def choose():
+            value = filedialog.askdirectory(title="选择数据工作目录")
+            if value:
+                app_settings.set_workspace(Path(value))
+                refresh()
+                self.write_log(f"数据工作目录已设置: {value}")
+
+        def reset():
+            app_settings.reset_workspace()
+            app_settings.set_pio_core_enabled(False)
+            core_enabled.set(False)
+            refresh()
+            self.write_log("数据目录已恢复默认")
+
+        ttk.Button(buttons, text="选择工作目录", command=choose).pack(side="left", padx=(0, 6))
+        ttk.Button(buttons, text="恢复默认", command=reset).pack(side="left", padx=6)
+        ttk.Button(buttons, text="关闭", command=window.destroy).pack(side="left", padx=6)
+        refresh()
+
+    def open_layout_viewer(self):
+        if self.layout_viewer_window and self.layout_viewer_window.winfo_exists():
+            self.layout_viewer_window.destroy()
+        item = self.elrs_hardware.get(self.elrs_vendor.get(), {}).get(self.elrs_product.get())
+        if not item:
+            messagebox.showinfo("请先选择型号", "请先在厂商和型号下拉中选择一个具体型号。")
+            return
+        source = Path(self.elrs_source.get().strip())
+        info = elrs_backend.read_layout_config(source, item["config"])
+        if not info["entries"]:
+            messagebox.showinfo("无配置", info["warning"] or "该型号没有可显示的 layout 配置。")
+            return
+        self.layout_info = info
+        self.layout_config = item["config"]
+        self.layout_values = {entry["key"]: entry["value"] for entry in info["entries"]}
+        self.layout_original = dict(self.layout_values)
+        self.layout_edits: set[str] = set()
+        active = app_settings.active_layout()
+        active_hint = ""
+        if active and active.get("config") == item["config"]:
+            active_hint = " 已启用活动配置，编译后会自动应用。"
+        self.layout_status = tk.StringVar(
+            value="双击表格行编辑数值；保存时会生成配置副本与固件副本，不改动原 layout 文件和原固件。"
+                  + active_hint
+        )
+        window = tk.Toplevel(self.root)
+        self.layout_viewer_window = window
+        window.title(f"硬件配置 - {info['product_name']}")
+        screen_height = self.root.winfo_screenheight()
+        height = max(640, min(720, screen_height - 80))
+        window.geometry(f"780x{height}")
+        window.minsize(740, 600)
+        body = ttk.Frame(window, padding=10)
+        body.pack(fill="both", expand=True)
+        overlay_count = sum(1 for entry in info["entries"] if "overlay" in entry["source"])
+        ttk.Label(body, text=f"型号: {info['product_name']}").pack(anchor="w")
+        ttk.Label(body, text=f"layout 文件: {info['layout_file']}").pack(anchor="w")
+        ttk.Label(
+            body,
+            text=f"条目: {len(info['entries'])}（其中 overlay 覆盖 {overlay_count} 项）；显示最终生效值",
+        ).pack(anchor="w", pady=(0, 6))
+        device_row = ttk.Frame(body)
+        device_row.pack(fill="x", pady=(4, 6))
+        ttk.Label(device_row, text="Lua 设备名").pack(side="left")
+        self.layout_device_name = tk.StringVar(value=info["lua_name"])
+        ttk.Entry(
+            device_row, textvariable=self.layout_device_name, width=24,
+        ).pack(side="left", padx=8)
+        ttk.Label(
+            device_row, text="最多 16 字节，写入固件尾部后由 Lua 读取",
+            foreground="#5f6368",
+        ).pack(side="left")
+        rx_row = ttk.Frame(body)
+        rx_row.pack(fill="x", pady=(0, 6))
+        active_match = bool(active and active.get("config") == item["config"])
+        self.layout_rx_as_tx = tk.BooleanVar(
+            value=bool(active_match and active.get("rx_as_tx"))
+        )
+        ttk.Checkbutton(
+            rx_row,
+            text="刷写接收机作为发射器（仅限 full-duplex 内部模块）",
+            variable=self.layout_rx_as_tx,
+        ).pack(side="left")
+        ttk.Label(body, text="搜索字段").pack(anchor="w")
+        search_var = tk.StringVar()
+        ttk.Entry(body, textvariable=search_var).pack(fill="x", pady=(2, 6))
+        frame = ttk.Frame(body)
+        frame.pack(fill="both", expand=True)
+        columns = ("key", "type", "value", "source")
+        tree = ttk.Treeview(frame, columns=columns, show="headings", height=18)
+        for column, text, width in (
+            ("key", "字段", 220), ("type", "类型", 80),
+            ("value", "当前值", 280), ("source", "来源 / 状态", 140),
+        ):
+            tree.heading(column, text=text)
+            tree.column(column, width=width, anchor="w")
+        scroll = ttk.Scrollbar(frame, orient="vertical", command=tree.yview)
+        tree.configure(yscrollcommand=scroll.set)
+        tree.pack(side="left", fill="both", expand=True)
+        scroll.pack(side="right", fill="y")
+        tree.bind("<Double-1>", lambda _event: self._edit_layout_value())
+        self.layout_tree = tree
+
+        def display(value):
+            if isinstance(value, list):
+                return ", ".join(str(item) for item in value)
+            if value is True:
+                return "true"
+            if value is False:
+                return "false"
+            return json.dumps(value, ensure_ascii=False) if isinstance(value, (dict, str)) else str(value)
+
+        def refresh(*_args):
+            for row in tree.get_children():
+                tree.delete(row)
+            needle = search_var.get().strip().lower()
+            for entry in info["entries"]:
+                if needle and needle not in entry["key"].lower():
+                    continue
+                key = entry["key"]
+                status = "已编辑" if key in self.layout_edits else entry["source"]
+                tree.insert("", "end", values=(
+                    key, type(self.layout_values[key]).__name__,
+                    display(self.layout_values[key]), status,
+                ))
+
+        self.layout_display = display
+        self.layout_refresh = refresh
+        search_var.trace_add("write", refresh)
+        refresh()
+        ttk.Label(
+            body, textvariable=self.layout_status, foreground="#b45309",
+            wraplength=720, justify="left",
+        ).pack(anchor="w", fill="x", pady=(8, 4))
+        actions = ttk.Frame(body)
+        actions.pack(anchor="e")
+        ttk.Button(
+            actions, text="保存配置副本", command=self.save_layout_override,
+            style="Primary.TButton",
+        ).pack(side="left", padx=(0, 6))
+        ttk.Button(
+            actions, text="应用配置", command=self.apply_layout_to_firmware,
+        ).pack(side="left", padx=(0, 6))
+        ttk.Button(
+            actions, text="清除活动配置", command=self.clear_layout_override,
+        ).pack(side="left", padx=(0, 6))
+        ttk.Button(actions, text="关闭", command=window.destroy).pack(side="left")
+        self.layout_search = search_var
+
+    def _edit_layout_value(self):
+        selection = self.layout_tree.selection()
+        if not selection:
+            return
+        key = str(self.layout_tree.item(selection[0], "values")[0])
+        original = self.layout_original[key]
+        editor = tk.Toplevel(self.layout_viewer_window)
+        editor.title(f"编辑 - {key}")
+        editor.transient(self.layout_viewer_window)
+        editor.geometry("440x180")
+        frame = ttk.Frame(editor, padding=12)
+        frame.pack(fill="both", expand=True)
+        ttk.Label(frame, text=f"字段: {key}    类型: {type(original).__name__}").pack(anchor="w")
+        value = tk.StringVar(value=self.layout_display(self.layout_values[key]))
+        entry = ttk.Entry(frame, textvariable=value, width=48)
+        entry.pack(fill="x", pady=8)
+        entry.focus_set()
+        ttk.Label(frame, text="数组用逗号分隔；布尔值用 true / false", foreground="#5f6368").pack(anchor="w")
+
+        def apply():
+            try:
+                parsed = elrs_backend.parse_layout_input(value.get(), original)
+            except (ValueError, TypeError) as exc:
+                messagebox.showerror("输入无效", str(exc), parent=editor)
+                return
+            self.layout_values[key] = parsed
+            self.layout_edits.add(key)
+            ok, msg = elrs_backend.validate_layout(self.layout_values)
+            self.layout_status.set(
+                f"{key} 已修改，尚未保存副本。" if ok else f"配置无效: {msg}"
+            )
+            self.layout_refresh()
+            editor.destroy()
+
+        ttk.Button(frame, text="确定", command=apply).pack(side="right", padx=(6, 0))
+        ttk.Button(frame, text="取消", command=editor.destroy).pack(side="right")
+
+    def save_layout_override(self):
+        if not getattr(self, "layout_values", None):
+            return
+        ok, message = elrs_backend.validate_layout(self.layout_values)
+        if not ok:
+            messagebox.showerror("配置无效", message)
+            return
+        source = Path(self.elrs_source.get().strip())
+        device_name = self.layout_device_name.get().strip() or None
+        rx_as_tx = self.layout_rx_as_tx.get()
+        values = (elrs_backend.rx_as_tx_values(self.layout_values)
+                  if rx_as_tx else self.layout_values)
+        env = (elrs_backend.to_tx_env(self.elrs_env.get())
+               if rx_as_tx else self.elrs_env.get())
+        result = elrs_backend.write_layout_override(
+            source, env, self.layout_info["product_name"], values, device_name,
+        )
+        if not result["json"]:
+            messagebox.showerror("保存失败", result["warning"])
+            return
+        app_settings.set_active_layout({
+            "config": self.layout_config,
+            "product": self.layout_info["product_name"],
+            "json": result["json"],
+            "env": env,
+            "device_name": device_name or "",
+            "rx_as_tx": rx_as_tx,
+        })
+        lines = [f"配置副本: {result['json']}（{result['bytes']} 字节）"]
+        if rx_as_tx:
+            lines.append(f"RX 当 TX（full-duplex）: 使用 {env} 固件")
+        if device_name:
+            lines.append(f"Lua 设备名: {device_name}")
+        if result["bin"]:
+            lines.append(f"固件副本: {result['bin']}")
+        lines.append("已设为活动配置：之后每次编译会自动应用到固件副本。")
+        if result["warning"]:
+            lines.append(result["warning"])
+        text = "\n".join(lines)
+        self.layout_status.set(text)
+        self.write_log("硬件配置副本已生成：\n" + text)
+        if result["bin"]:
+            self.elrs_artifact.set(result["bin"])
+
+    def apply_layout_to_firmware(self):
+        active = app_settings.active_layout()
+        if not active:
+            messagebox.showinfo("无活动配置", "请先编辑并保存配置副本。")
+            return
+        source = Path(self.elrs_source.get().strip())
+        env = self.elrs_env.get() or str(active.get("env", ""))
+        result = elrs_backend.apply_active_layout(
+            source, env, str(active.get("config", ""))
+        )
+        if not result or not result.get("bin"):
+            messagebox.showerror(
+                "应用失败",
+                (result or {}).get("warning", "未找到活动配置或已编译的 firmware.bin。"),
+            )
+            return
+        text = f"已应用自定义配置: {result['bin']}"
+        self.layout_status.set(text)
+        self.write_log(text)
+        self.elrs_artifact.set(result["bin"])
+
+    def clear_layout_override(self):
+        app_settings.clear_active_layout()
+        text = "已清除活动配置：后续编译不再自动应用自定义 layout。"
+        self.layout_status.set(text)
+        self.write_log(text)
 
     def switch_system(self, name: str):
         is_elrs = name == "elrs"
@@ -1271,13 +1591,26 @@ class App:
         except OSError as exc:
             messagebox.showerror("打开失败", str(exc))
 
+    def open_elrs_artifact_dir(self):
+        import os
+
+        source = Path(self.elrs_source.get().strip())
+        directory = elrs_backend.artifacts_dir(source, self.elrs_env.get())
+        if (directory is None or not directory.is_dir()) and self.elrs_artifact.get():
+            directory = Path(self.elrs_artifact.get()).parent
+        if directory is None or not directory.is_dir():
+            messagebox.showerror("目录不存在", "请先编译固件，或选择已编译过的目标。")
+            return
+        try:
+            os.startfile(str(directory))
+        except OSError as exc:
+            messagebox.showerror("打开失败", str(exc))
+
     def load_elrs_targets(self):
         source = Path(self.elrs_source.get().strip())
         if not elrs_backend.find_source(source):
             messagebox.showerror("目录无效", "请选择包含 platformio.ini 的 ELRS 源码目录（根目录或 src 子目录）。")
             return
-
-        self.busy = True
 
         def worker():
             self.events.put(("busy", "1"))
@@ -1311,14 +1644,45 @@ class App:
         self.events.put(("status", "PlatformIO 安装完成/已安装" if ok
                          else "PlatformIO 安装失败，请查看日志"))
 
-    def _elrs_build_worker(self, source: Path, env: str):
+    def _elrs_build_worker(
+        self, source: Path, env: str, config: str | None = None,
+        active_config: str | None = None,
+    ):
         self.events.put(("busy", "1"))
         self.events.put(("progress_mode", "indeterminate"))
-        ok, artifacts = elrs_backend.build_firmware(
-            source, env, lambda line: self.events.put(("log", line))
-        )
+        self.events.put(("status", f"正在编译 {env}（首次需下载工具链）"))
+        phase = {"last": ""}
+
+        def on_line(line: str):
+            self.events.put(("log", line))
+            low = line.lower()
+            if ("downloading" in low or "unpacking" in low
+                    or "platform manager" in low or "tool manager" in low):
+                key, text = "download", "正在下载/安装工具链（首次较慢）"
+            elif "library manager" in low or "installing" in low:
+                key, text = "deps", "正在安装依赖库"
+            elif "compiling" in low or "archiving" in low:
+                key, text = "compile", "正在编译固件"
+            elif "linking" in low or "generating" in low or "building .pio" in low:
+                key, text = "link", "正在生成固件"
+            else:
+                return
+            if phase["last"] != key:
+                phase["last"] = key
+                self.events.put(("status", text))
+
+        ok, artifacts = elrs_backend.build_firmware(source, env, on_line, config)
         for artifact in artifacts:
             self.events.put(("log", f"产物: {artifact}"))
+        if artifacts:
+            self.events.put(("elrs_artifact", str(artifacts[0])))
+        if ok and active_config:
+            applied = elrs_backend.apply_active_layout(source, env, active_config)
+            if applied and applied.get("bin"):
+                self.events.put(("log", f"已自动应用自定义硬件配置: {applied['bin']}"))
+                self.events.put(("elrs_artifact", applied["bin"]))
+            elif applied and applied.get("warning"):
+                self.events.put(("log", f"自定义配置应用失败: {applied['warning']}"))
         self.events.put(("progress_mode", "determinate"))
         self.events.put(("busy", "0"))
         self.events.put(("status", "ELRS 固件编译完成" if ok
@@ -1476,7 +1840,19 @@ class App:
         self.status.set("日志已清除")
 
     def run_async(self, fn):
-        threading.Thread(target=fn, daemon=True).start()
+        if self.busy:
+            messagebox.showinfo("正在执行", "已有任务在运行，请等待完成后再操作。")
+            return False
+        self.busy = True
+
+        def wrapper():
+            try:
+                fn()
+            finally:
+                self.events.put(("busy", "0"))
+
+        threading.Thread(target=wrapper, daemon=True).start()
+        return True
 
     def spinner_tick(self):
         if self.busy:
@@ -1684,7 +2060,15 @@ class App:
             if not self._apply_user_defines():
                 messagebox.showerror("配置失败", "user_defines 保存失败，已取消编译。")
                 return
-            self.run_async(lambda: self._elrs_build_worker(source, env))
+            config = product["config"] if product else None
+            active = app_settings.active_layout()
+            active_config = (
+                active.get("config") if active and product
+                and active.get("config") == product["config"] else None
+            )
+            self.run_async(lambda: self._elrs_build_worker(
+                source, env, config, active_config
+            ))
             return
         result = self.cmake_args()
         if result:
@@ -1775,6 +2159,8 @@ class App:
                     else:
                         self.progress.stop()
                         self.progress.configure(mode="determinate", value=0)
+                elif kind == "elrs_artifact":
+                    self.elrs_artifact.set(value)
                 elif kind == "elrs_envs":
                     self.elrs_envs = json.loads(value)
                     self._refresh_elrs_envs()
