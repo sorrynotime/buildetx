@@ -88,6 +88,9 @@ def pio_venv_dir() -> Path:
     legacy = module_dir() / "tools" / "pio-venv"
     if legacy.is_dir():
         return legacy
+    workspace_tools = workspace() / "tools" / "pio-venv"
+    if workspace_tools.is_dir():
+        return workspace_tools
     return workspace() / "pio-venv"
 
 
