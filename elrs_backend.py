@@ -563,7 +563,8 @@ def platform_package_status(source: Path) -> dict:
     return result
 
 
-def check_platform_packages(source: Path, on_line) -> dict:
+def check_platform_packages(source: Path, on_line, on_warning=None) -> dict:
+    warn = on_warning or on_line
     status = platform_package_status(source)
     if not status["available"]:
         on_line("跳过平台包检查：PlatformIO 不可用，请先安装。")
@@ -578,7 +579,8 @@ def check_platform_packages(source: Path, on_line) -> dict:
         else:
             details.append("工具包 OK")
         details.append("代表目标依赖库已装" if entry["libs_ok"] else "代表目标依赖库未装")
-        on_line(f"{'OK' if entry['ready'] else '缺失':<4} {entry['group']}: " + " | ".join(details))
+        line = f"{'OK' if entry['ready'] else '缺失':<4} {entry['group']}: " + " | ".join(details)
+        (on_line if entry["ready"] else warn)(line)
     if status["missing"]:
         on_line("提示：可点击「预下载平台包」提前安装，之后首次编译会快很多。")
     else:

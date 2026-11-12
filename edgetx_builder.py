@@ -206,6 +206,7 @@ class App:
         self.layout_debug_window: tk.Toplevel | None = None
         self.settings_window: tk.Toplevel | None = None
         self.layout_viewer_window: tk.Toplevel | None = None
+        self.prefetch_window: tk.Toplevel | None = None
 
         self._setup_theme()
         self._build_ui()
@@ -1644,7 +1645,10 @@ class App:
             self.events.put(("log", line))
 
         ok = elrs_backend.check_environment(source, on_line)
-        packages = elrs_backend.check_platform_packages(source, on_line)
+        packages = elrs_backend.check_platform_packages(
+            source, on_line,
+            lambda line: self.events.put(("log_warning", line)),
+        )
         missing = packages["missing"]
         if not ok:
             status = "ELRS 环境检查未通过，请查看日志"
@@ -1674,16 +1678,48 @@ class App:
         if not missing:
             messagebox.showinfo("已就绪", "所有平台包已就绪，无需预下载。")
             return
-        lines = [f"以下平台包尚未就绪（共 {len(missing)} 类）："]
+        if self.prefetch_window and self.prefetch_window.winfo_exists():
+            self.prefetch_window.deiconify()
+            self.prefetch_window.lift()
+            return
+        window = tk.Toplevel(self.root)
+        self.prefetch_window = window
+        window.title("选择要预下载的平台包")
+        window.transient(self.root)
+        window.resizable(False, False)
+        body = ttk.Frame(window, padding=14)
+        body.pack(fill="both", expand=True)
+        ttk.Label(
+            body, text="以下平台包尚未就绪，勾选需要提前安装的项：",
+            wraplength=480,
+        ).pack(anchor="w", pady=(0, 8))
+        choices = []
         for entry in missing:
             detail = (entry["platform"] if not entry["platform_ok"]
                       else ", ".join(entry["missing_tools"]) or "代表目标依赖库")
-            lines.append(f"  {entry['group']}: 缺 {detail}")
-        lines.append("")
-        lines.append("现在下载？只安装平台与依赖，不编译固件；首次下载可能较久。")
-        if not messagebox.askyesno("提前安装包", "\n".join(lines)):
-            return
-        self.run_async(lambda: self._elrs_prefetch_worker(source, missing))
+            var = tk.BooleanVar(value=True)
+            ttk.Checkbutton(
+                body, text=f"{entry['group']}  —  缺 {detail}", variable=var,
+            ).pack(anchor="w", pady=4)
+            choices.append((entry, var))
+        self.prefetch_choices = choices
+        ttk.Label(
+            body, text="只安装平台与依赖，不编译固件；首次下载可能较久。",
+            foreground="#b45309", wraplength=480,
+        ).pack(anchor="w", pady=(12, 8))
+        actions = ttk.Frame(body)
+        actions.pack(anchor="e")
+
+        def start():
+            selected = [entry for entry, var in choices if var.get()]
+            window.destroy()
+            if selected:
+                self.run_async(lambda: self._elrs_prefetch_worker(source, selected))
+
+        ttk.Button(
+            actions, text="下载选中", command=start, style="Primary.TButton",
+        ).pack(side="left", padx=(0, 6))
+        ttk.Button(actions, text="取消", command=window.destroy).pack(side="left")
 
     def _elrs_prefetch_worker(self, source: Path, groups: list[dict]):
         self.events.put(("busy", "1"))
@@ -1866,11 +1902,13 @@ class App:
             )
         self.hardware_warning_label.grid()
 
-    def write_log(self, text: str):
+    def write_log(self, text: str, forced_tag: str | None = None):
         self.log.configure(state="normal")
         for line in text.splitlines() or [""]:
             upper = line.upper()
-            if line.startswith("***") or line.startswith("** "):
+            if forced_tag:
+                tag = forced_tag
+            elif line.startswith("***") or line.startswith("** "):
                 tag = "header"
             elif "OK" in upper or "SUCCESS" in upper or "完成" in line:
                 tag = "ok"
@@ -2220,6 +2258,8 @@ class App:
                     self._load_hardware_catalog()
                 elif kind == "log":
                     self.write_log(value)
+                elif kind == "log_warning":
+                    self.write_log(value, "warning")
                 else:
                     self.status.set(value)
         except queue.Empty:
