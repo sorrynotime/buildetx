@@ -206,6 +206,7 @@ class App:
         self.layout_debug_window: tk.Toplevel | None = None
         self.settings_window: tk.Toplevel | None = None
         self.layout_viewer_window: tk.Toplevel | None = None
+        self.prefetch_window: tk.Toplevel | None = None
 
         self._setup_theme()
         self._build_ui()
@@ -1008,6 +1009,7 @@ class App:
         for key, text, command in (
             ("check", "检查环境", self.check_environment),
             ("deps", "安装 Python 依赖", self.install_deps),
+            ("prefetch", "预下载平台包", self.prefetch_elrs_packages),
             ("configure", "配置 CMake", self.configure),
             ("build", "编译固件", self.build),
             ("clear", "清除日志", self.clear_log),
@@ -1488,6 +1490,16 @@ class App:
             self.elrs_panel.grid(row=0, column=0, columnspan=2, sticky="w")
         else:
             self.elrs_panel.grid_remove()
+        buttons = getattr(self, "action_buttons", {})
+        prefetch = buttons.get("prefetch")
+        if prefetch:
+            if is_elrs:
+                prefetch.pack(
+                    side="left", after=buttons["deps"],
+                    padx=self.layout_vars["button_item_padx"].get(),
+                )
+            else:
+                prefetch.pack_forget()
 
     def _load_hardware_catalog(self):
         source = Path(self.elrs_source.get().strip())
@@ -1628,12 +1640,24 @@ class App:
     def _elrs_check_worker(self):
         self.events.put(("busy", "1"))
         source = Path(self.elrs_source.get().strip())
-        ok = elrs_backend.check_environment(
-            source, lambda line: self.events.put(("log", line))
+
+        def on_line(line: str):
+            self.events.put(("log", line))
+
+        ok = elrs_backend.check_environment(source, on_line)
+        packages = elrs_backend.check_platform_packages(
+            source, on_line,
+            lambda line: self.events.put(("log_warning", line)),
         )
+        missing = packages["missing"]
+        if not ok:
+            status = "ELRS 环境检查未通过，请查看日志"
+        elif missing:
+            status = f"检查完成；{len(missing)} 类平台包未就绪，可点预下载平台包"
+        else:
+            status = "ELRS 环境检查完成，平台包已就绪"
         self.events.put(("busy", "0"))
-        self.events.put(("status", "ELRS 环境检查完成" if ok
-                         else "ELRS 环境检查未通过，请查看日志"))
+        self.events.put(("status", status))
 
     def _elrs_install_worker(self):
         self.events.put(("busy", "1"))
@@ -1643,6 +1667,71 @@ class App:
         self.events.put(("busy", "0"))
         self.events.put(("status", "PlatformIO 安装完成/已安装" if ok
                          else "PlatformIO 安装失败，请查看日志"))
+
+    def prefetch_elrs_packages(self):
+        source = Path(self.elrs_source.get().strip())
+        status = elrs_backend.platform_package_status(source)
+        if not status["available"]:
+            messagebox.showinfo("未就绪", "请先安装 PlatformIO，再预下载平台包。")
+            return
+        missing = status["missing"]
+        if not missing:
+            messagebox.showinfo("已就绪", "所有平台包已就绪，无需预下载。")
+            return
+        if self.prefetch_window and self.prefetch_window.winfo_exists():
+            self.prefetch_window.deiconify()
+            self.prefetch_window.lift()
+            return
+        window = tk.Toplevel(self.root)
+        self.prefetch_window = window
+        window.title("选择要预下载的平台包")
+        window.transient(self.root)
+        window.resizable(False, False)
+        body = ttk.Frame(window, padding=14)
+        body.pack(fill="both", expand=True)
+        ttk.Label(
+            body, text="以下平台包尚未就绪，勾选需要提前安装的项：",
+            wraplength=480,
+        ).pack(anchor="w", pady=(0, 8))
+        choices = []
+        for entry in missing:
+            detail = (entry["platform"] if not entry["platform_ok"]
+                      else ", ".join(entry["missing_tools"]) or "代表目标依赖库")
+            var = tk.BooleanVar(value=True)
+            ttk.Checkbutton(
+                body, text=f"{entry['group']}  —  缺 {detail}", variable=var,
+            ).pack(anchor="w", pady=4)
+            choices.append((entry, var))
+        self.prefetch_choices = choices
+        ttk.Label(
+            body, text="只安装平台与依赖，不编译固件；首次下载可能较久。",
+            foreground="#b45309", wraplength=480,
+        ).pack(anchor="w", pady=(12, 8))
+        actions = ttk.Frame(body)
+        actions.pack(anchor="e")
+
+        def start():
+            selected = [entry for entry, var in choices if var.get()]
+            window.destroy()
+            if selected:
+                self.run_async(lambda: self._elrs_prefetch_worker(source, selected))
+
+        ttk.Button(
+            actions, text="下载选中", command=start, style="Primary.TButton",
+        ).pack(side="left", padx=(0, 6))
+        ttk.Button(actions, text="取消", command=window.destroy).pack(side="left")
+
+    def _elrs_prefetch_worker(self, source: Path, groups: list[dict]):
+        self.events.put(("busy", "1"))
+        self.events.put(("progress_mode", "indeterminate"))
+        self.events.put(("status", "正在预下载平台包..."))
+        ok = elrs_backend.prefetch_platform_packages(
+            source, groups, lambda line: self.events.put(("log", line))
+        )
+        self.events.put(("progress_mode", "determinate"))
+        self.events.put(("busy", "0"))
+        self.events.put(("status", "平台包预下载完成" if ok
+                         else "平台包预下载失败，请查看日志"))
 
     def _elrs_build_worker(
         self, source: Path, env: str, config: str | None = None,
@@ -1813,11 +1902,13 @@ class App:
             )
         self.hardware_warning_label.grid()
 
-    def write_log(self, text: str):
+    def write_log(self, text: str, forced_tag: str | None = None):
         self.log.configure(state="normal")
         for line in text.splitlines() or [""]:
             upper = line.upper()
-            if line.startswith("***") or line.startswith("** "):
+            if forced_tag:
+                tag = forced_tag
+            elif line.startswith("***") or line.startswith("** "):
                 tag = "header"
             elif "OK" in upper or "SUCCESS" in upper or "完成" in line:
                 tag = "ok"
@@ -2167,6 +2258,8 @@ class App:
                     self._load_hardware_catalog()
                 elif kind == "log":
                     self.write_log(value)
+                elif kind == "log_warning":
+                    self.write_log(value, "warning")
                 else:
                     self.status.set(value)
         except queue.Empty:

@@ -494,6 +494,120 @@ def apply_active_layout(source: Path, env: str, config_path: str) -> dict | None
     )
 
 
+PLATFORM_GROUPS = {
+    "ESP32": {
+        "prefix": "Unified_ESP32_", "platform": "espressif32",
+        "tools": ("framework-arduinoespressif32", "toolchain-xtensa-esp32", "tool-esptoolpy"),
+    },
+    "ESP32-C3": {
+        "prefix": "Unified_ESP32C3_", "platform": "espressif32",
+        "tools": ("framework-arduinoespressif32", "toolchain-riscv32-esp", "tool-esptoolpy"),
+    },
+    "ESP32-S3": {
+        "prefix": "Unified_ESP32S3_", "platform": "espressif32",
+        "tools": ("framework-arduinoespressif32", "toolchain-xtensa-esp32s3", "tool-esptoolpy"),
+    },
+    "ESP8285": {
+        "prefix": "Unified_ESP8285_", "platform": "espressif8266",
+        "tools": ("framework-arduinoespressif8266", "toolchain-xtensa", "tool-esptoolpy"),
+    },
+}
+
+
+def platform_package_status(source: Path) -> dict:
+    """Check whether each chip family's PlatformIO packages are ready."""
+    result = {"available": False, "groups": [], "missing": []}
+    workdir = find_source(source)
+    python = pio_python()
+    if not workdir or not python or not pio_version(python):
+        return result
+    code, output = run_capture(
+        [python, "-m", "platformio", "platform", "list", "--json-output"],
+        cwd=workdir, env=pio_env(),
+    )
+    platforms = set()
+    if code == 0:
+        try:
+            platforms = {item["name"] for item in json.loads(output)}
+        except (ValueError, KeyError, TypeError):
+            pass
+    _code, tools_output = run_capture(
+        [python, "-m", "platformio", "pkg", "list", "-g"],
+        cwd=workdir, env=pio_env(),
+    )
+    installed_tools = set()
+    for line in tools_output.splitlines():
+        match = re.search(r"[├└]──\s+([^\s@]+)\s+@", line)
+        if match:
+            installed_tools.add(match.group(1))
+    envs = [env for items in list_envs(source).values() for env in items]
+    result["available"] = True
+    for group, spec in PLATFORM_GROUPS.items():
+        candidates = sorted(env for env in envs if env.startswith(spec["prefix"]))
+        if not candidates:
+            continue
+        env = (next((item for item in candidates if "_TX_via_UART" in item), None)
+               or next((item for item in candidates if "_via_UART" in item), candidates[0]))
+        missing_tools = [tool for tool in spec["tools"] if tool not in installed_tools]
+        libs_ready = (workdir / ".pio" / "libdeps" / env).is_dir()
+        entry = {
+            "group": group, "env": env, "platform": spec["platform"],
+            "platform_ok": spec["platform"] in platforms,
+            "missing_tools": missing_tools, "libs_ok": libs_ready,
+        }
+        entry["ready"] = (
+            entry["platform_ok"] and not missing_tools and libs_ready
+        )
+        result["groups"].append(entry)
+    result["missing"] = [entry for entry in result["groups"] if not entry["ready"]]
+    return result
+
+
+def check_platform_packages(source: Path, on_line, on_warning=None) -> dict:
+    warn = on_warning or on_line
+    status = platform_package_status(source)
+    if not status["available"]:
+        on_line("跳过平台包检查：PlatformIO 不可用，请先安装。")
+        return status
+    workdir = find_source(source)
+    on_line(f"平台包检查（全局: {app_settings.pio_core_dir() or 'PlatformIO 默认目录'}；项目库: {workdir / '.pio' / 'libdeps'}）")
+    for entry in status["groups"]:
+        details = []
+        details.append("平台 OK" if entry["platform_ok"] else f"平台缺失 {entry['platform']}")
+        if entry["missing_tools"]:
+            details.append("缺工具包 " + ", ".join(entry["missing_tools"]))
+        else:
+            details.append("工具包 OK")
+        details.append("代表目标依赖库已装" if entry["libs_ok"] else "代表目标依赖库未装")
+        line = f"{'OK' if entry['ready'] else '缺失':<4} {entry['group']}: " + " | ".join(details)
+        (on_line if entry["ready"] else warn)(line)
+    if status["missing"]:
+        on_line("提示：可点击「预下载平台包」提前安装，之后首次编译会快很多。")
+    else:
+        on_line("全部平台包已就绪。")
+    return status
+
+
+def prefetch_platform_packages(source: Path, groups: list[dict], on_line) -> bool:
+    """Install platform/tool/library deps without compiling firmware."""
+    workdir = find_source(source)
+    python = pio_python()
+    if not workdir or not python or not pio_version(python):
+        on_line("失败：PlatformIO 不可用。")
+        return False
+    ok = True
+    for entry in groups:
+        on_line(f"正在预装 {entry['group']}（{entry['env']}）...")
+        code, _ = run_capture(
+            [python, "-m", "platformio", "pkg", "install", "-e", entry["env"]],
+            cwd=workdir, on_line=on_line, env=pio_env(), stdin=subprocess.PIPE,
+        )
+        if code != 0:
+            on_line(f"失败：{entry['group']} 预装未完成。")
+            ok = False
+    return ok
+
+
 REGULATORY_DOMAINS = (
     "Regulatory_Domain_AU_915", "Regulatory_Domain_EU_868",
     "Regulatory_Domain_IN_866", "Regulatory_Domain_AU_433",
@@ -579,7 +693,10 @@ def write_user_defines(source: Path, values: dict[str, str | bool]) -> tuple[boo
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="ExpressLRS PlatformIO 后端")
-    parser.add_argument("command", choices=("check", "install", "list", "build", "defines", "hardware", "layout"))
+    parser.add_argument("command", choices=(
+        "check", "install", "list", "build", "defines", "hardware",
+        "layout", "packages", "prefetch",
+    ))
     parser.add_argument("--source", default=DEFAULT_SOURCE)
     parser.add_argument("--env", default="")
     parser.add_argument("--domain", choices=("默认", *REGULATORY_DOMAINS))
@@ -593,6 +710,13 @@ def main() -> int:
     def on_line(line: str):
         print(line, flush=True)
 
+    if args.command in ("packages", "prefetch"):
+        status = check_platform_packages(source, on_line)
+        if not status["available"]:
+            return 1
+        if args.command == "prefetch" and status["missing"]:
+            return 0 if prefetch_platform_packages(source, status["missing"], on_line) else 1
+        return 0
     if args.command == "check":
         return 0 if check_environment(source, on_line) else 1
     if args.command == "install":
