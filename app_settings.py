@@ -22,8 +22,19 @@ def module_dir() -> Path:
     return Path(__file__).resolve().parent
 
 
+def portable_root() -> Path | None:
+    """Detect a development/portable folder that already has tools/pio-venv."""
+    for base in (module_dir(), module_dir().parent):
+        if (base / "tools" / "pio-venv").is_dir():
+            return base
+    return None
+
+
 def default_workspace() -> Path:
     if getattr(sys, "frozen", False):
+        portable = portable_root()
+        if portable:
+            return portable
         base = os.environ.get("LOCALAPPDATA") or str(Path.home() / "AppData" / "Local")
         return Path(base) / APP_DIR_NAME
     return module_dir()
