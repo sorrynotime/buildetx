@@ -1311,11 +1311,11 @@ class App:
         self.events.put(("status", "PlatformIO 安装完成/已安装" if ok
                          else "PlatformIO 安装失败，请查看日志"))
 
-    def _elrs_build_worker(self, source: Path, env: str):
+    def _elrs_build_worker(self, source: Path, env: str, config: str | None = None):
         self.events.put(("busy", "1"))
         self.events.put(("progress_mode", "indeterminate"))
         ok, artifacts = elrs_backend.build_firmware(
-            source, env, lambda line: self.events.put(("log", line))
+            source, env, lambda line: self.events.put(("log", line)), config
         )
         for artifact in artifacts:
             self.events.put(("log", f"产物: {artifact}"))
@@ -1684,7 +1684,8 @@ class App:
             if not self._apply_user_defines():
                 messagebox.showerror("配置失败", "user_defines 保存失败，已取消编译。")
                 return
-            self.run_async(lambda: self._elrs_build_worker(source, env))
+            config = product["config"] if product else None
+            self.run_async(lambda: self._elrs_build_worker(source, env, config))
             return
         result = self.cmake_args()
         if result:

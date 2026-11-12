@@ -14,7 +14,9 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import re
+import subprocess
 import sys
 from pathlib import Path
 
@@ -151,7 +153,9 @@ def list_envs(source: Path) -> dict[str, list[str]]:
     return {kind: sorted(envs) for kind, envs in groups.items() if envs}
 
 
-def build_firmware(source: Path, env: str, on_line) -> tuple[bool, list[Path]]:
+def build_firmware(
+    source: Path, env: str, on_line, config: str | None = None
+) -> tuple[bool, list[Path]]:
     workdir = find_source(source)
     python = pio_python()
     if not workdir:
@@ -160,9 +164,17 @@ def build_firmware(source: Path, env: str, on_line) -> tuple[bool, list[Path]]:
     if not python or not pio_version(python):
         on_line("失败：PlatformIO 不可用，请先安装。")
         return False, []
+    child_env = os.environ.copy()
+    if config:
+        child_env["ELRS_UNIFIED_CONFIG"] = config
+        on_line(f"硬件配置: {config}（自动注入，无需交互选择）")
+    else:
+        child_env.pop("ELRS_UNIFIED_CONFIG", None)
+        on_line("未选择硬件配置，生成 bare 固件（之后可用 Web UI 配置）")
     on_line(f"开始编译 {env}（首次编译需联网下载工具链，可能耗时较长）...")
     code, _ = run_capture(
-        [python, "-m", "platformio", "run", "-e", env], cwd=workdir, on_line=on_line
+        [python, "-m", "platformio", "run", "-e", env], cwd=workdir, on_line=on_line,
+        env=child_env, stdin=subprocess.PIPE,
     )
     build_dir = workdir / ".pio" / "build" / env
     artifacts = sorted(
@@ -218,6 +230,7 @@ def read_hardware_catalog(
                     label = f"{name} [{section}/{key}]"
                 products[label] = {
                     "product_name": name,
+                    "config": f"{brand}.{section}.{key}",
                     "firmware": firmware,
                     "kind": "TX" if firmware.endswith("_TX") or section.startswith("tx_") else "RX",
                     "layout": str(product.get("layout_file", "")),
@@ -320,6 +333,7 @@ def main() -> int:
     parser.add_argument("--binding")
     parser.add_argument("--lock", choices=("on", "off"))
     parser.add_argument("--vendor")
+    parser.add_argument("--config", help="非交互硬件配置键路径，如 radiomaster.tx_2400.boxer")
     args = parser.parse_args()
     source = Path(args.source)
 
@@ -381,7 +395,7 @@ def main() -> int:
     if not args.env:
         print("build 需要 --env <目标名>")
         return 1
-    ok, artifacts = build_firmware(source, args.env, on_line)
+    ok, artifacts = build_firmware(source, args.env, on_line, args.config)
     for artifact in artifacts:
         print(f"产物: {artifact}")
     return 0 if ok else 1
