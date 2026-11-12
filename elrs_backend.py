@@ -160,6 +160,13 @@ FILE_LOCK_MARKERS = (
 )
 
 
+def artifacts_dir(source: Path, env: str) -> Path | None:
+    workdir = find_source(source)
+    if not workdir or not env:
+        return None
+    return workdir / ".pio" / "build" / env
+
+
 def build_firmware(
     source: Path, env: str, on_line, config: str | None = None
 ) -> tuple[bool, list[Path]]:
@@ -192,11 +199,11 @@ def build_firmware(
             break
         on_line(f"检测到固件文件被占用，2 秒后自动重试（{attempt}/{attempts - 1}）...")
         time.sleep(2)
-    build_dir = workdir / ".pio" / "build" / env
+    build_dir = artifacts_dir(source, env)
     artifacts = sorted(
         path for path in build_dir.glob("firmware.*")
         if path.suffix in {".bin", ".elrs", ".hex"}
-    ) if build_dir.is_dir() else []
+    ) if build_dir is not None and build_dir.is_dir() else []
     on_line("OK   编译成功。" if code == 0 else f"失败：pio 退出码 {code}")
     return code == 0, artifacts
 

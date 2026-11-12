@@ -116,6 +116,7 @@ class App:
         self.elrs_vendor = tk.StringVar(value=ELRS_MANUAL_MODE)
         self.elrs_product = tk.StringVar(value="")
         self.elrs_layout = tk.StringVar(value="")
+        self.elrs_artifact = tk.StringVar(value="")
         self.elrs_hardware: dict[str, dict[str, dict]] = {}
         self.feature_vars = {
             option: tk.BooleanVar(value=default)
@@ -1127,6 +1128,14 @@ class App:
         ttk.Button(
             inner, text="打开 user_defines.txt", command=self.open_user_defines,
         ).grid(row=7, column=3, sticky="w", pady=6)
+        ttk.Button(
+            inner, text="打开产物目录", command=self.open_elrs_artifact_dir,
+            style="Primary.TButton",
+        ).grid(row=8, column=0, sticky="w", pady=(10, 6))
+        ttk.Label(
+            inner, textvariable=self.elrs_artifact, style="Panel.TLabel",
+            foreground="#5f6368", wraplength=780,
+        ).grid(row=8, column=1, columnspan=3, sticky="w", padx=(10, 0), pady=(10, 6))
 
     def switch_system(self, name: str):
         is_elrs = name == "elrs"
@@ -1271,6 +1280,21 @@ class App:
         except OSError as exc:
             messagebox.showerror("打开失败", str(exc))
 
+    def open_elrs_artifact_dir(self):
+        import os
+
+        source = Path(self.elrs_source.get().strip())
+        directory = elrs_backend.artifacts_dir(source, self.elrs_env.get())
+        if (directory is None or not directory.is_dir()) and self.elrs_artifact.get():
+            directory = Path(self.elrs_artifact.get()).parent
+        if directory is None or not directory.is_dir():
+            messagebox.showerror("目录不存在", "请先编译固件，或选择已编译过的目标。")
+            return
+        try:
+            os.startfile(str(directory))
+        except OSError as exc:
+            messagebox.showerror("打开失败", str(exc))
+
     def load_elrs_targets(self):
         source = Path(self.elrs_source.get().strip())
         if not elrs_backend.find_source(source):
@@ -1317,6 +1341,8 @@ class App:
         )
         for artifact in artifacts:
             self.events.put(("log", f"产物: {artifact}"))
+        if artifacts:
+            self.events.put(("elrs_artifact", str(artifacts[0])))
         self.events.put(("progress_mode", "determinate"))
         self.events.put(("busy", "0"))
         self.events.put(("status", "ELRS 固件编译完成" if ok
@@ -1786,6 +1812,8 @@ class App:
                     else:
                         self.progress.stop()
                         self.progress.configure(mode="determinate", value=0)
+                elif kind == "elrs_artifact":
+                    self.elrs_artifact.set(value)
                 elif kind == "elrs_envs":
                     self.elrs_envs = json.loads(value)
                     self._refresh_elrs_envs()
