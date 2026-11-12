@@ -1224,11 +1224,17 @@ class App:
             messagebox.showinfo("无配置", info["warning"] or "该型号没有可显示的 layout 配置。")
             return
         self.layout_info = info
+        self.layout_config = item["config"]
         self.layout_values = {entry["key"]: entry["value"] for entry in info["entries"]}
         self.layout_original = dict(self.layout_values)
         self.layout_edits: set[str] = set()
+        active = app_settings.active_layout()
+        active_hint = ""
+        if active and active.get("config") == item["config"]:
+            active_hint = " 已启用活动配置，编译后会自动应用。"
         self.layout_status = tk.StringVar(
             value="双击表格行编辑数值；保存时会生成配置副本与固件副本，不改动原 layout 文件和原固件。"
+                  + active_hint
         )
         window = tk.Toplevel(self.root)
         self.layout_viewer_window = window
@@ -1300,6 +1306,12 @@ class App:
             actions, text="保存配置副本", command=self.save_layout_override,
             style="Primary.TButton",
         ).pack(side="left", padx=(0, 6))
+        ttk.Button(
+            actions, text="应用配置", command=self.apply_layout_to_firmware,
+        ).pack(side="left", padx=(0, 6))
+        ttk.Button(
+            actions, text="清除活动配置", command=self.clear_layout_override,
+        ).pack(side="left", padx=(0, 6))
         ttk.Button(actions, text="关闭", command=window.destroy).pack(side="left")
         self.layout_search = search_var
 
@@ -1355,9 +1367,16 @@ class App:
         if not result["json"]:
             messagebox.showerror("保存失败", result["warning"])
             return
+        app_settings.set_active_layout({
+            "config": self.layout_config,
+            "product": self.layout_info["product_name"],
+            "json": result["json"],
+            "env": self.elrs_env.get(),
+        })
         lines = [f"配置副本: {result['json']}（{result['bytes']} 字节）"]
         if result["bin"]:
             lines.append(f"固件副本: {result['bin']}")
+        lines.append("已设为活动配置：之后每次编译会自动应用到固件副本。")
         if result["warning"]:
             lines.append(result["warning"])
         text = "\n".join(lines)
@@ -1365,6 +1384,33 @@ class App:
         self.write_log("硬件配置副本已生成：\n" + text)
         if result["bin"]:
             self.elrs_artifact.set(result["bin"])
+
+    def apply_layout_to_firmware(self):
+        active = app_settings.active_layout()
+        if not active:
+            messagebox.showinfo("无活动配置", "请先编辑并保存配置副本。")
+            return
+        source = Path(self.elrs_source.get().strip())
+        env = self.elrs_env.get() or str(active.get("env", ""))
+        result = elrs_backend.apply_active_layout(
+            source, env, str(active.get("config", ""))
+        )
+        if not result or not result.get("bin"):
+            messagebox.showerror(
+                "应用失败",
+                (result or {}).get("warning", "未找到活动配置或已编译的 firmware.bin。"),
+            )
+            return
+        text = f"已应用自定义配置: {result['bin']}"
+        self.layout_status.set(text)
+        self.write_log(text)
+        self.elrs_artifact.set(result["bin"])
+
+    def clear_layout_override(self):
+        app_settings.clear_active_layout()
+        text = "已清除活动配置：后续编译不再自动应用自定义 layout。"
+        self.layout_status.set(text)
+        self.write_log(text)
 
     def switch_system(self, name: str):
         is_elrs = name == "elrs"
@@ -1562,7 +1608,10 @@ class App:
         self.events.put(("status", "PlatformIO 安装完成/已安装" if ok
                          else "PlatformIO 安装失败，请查看日志"))
 
-    def _elrs_build_worker(self, source: Path, env: str, config: str | None = None):
+    def _elrs_build_worker(
+        self, source: Path, env: str, config: str | None = None,
+        active_config: str | None = None,
+    ):
         self.events.put(("busy", "1"))
         self.events.put(("progress_mode", "indeterminate"))
         ok, artifacts = elrs_backend.build_firmware(
@@ -1572,6 +1621,13 @@ class App:
             self.events.put(("log", f"产物: {artifact}"))
         if artifacts:
             self.events.put(("elrs_artifact", str(artifacts[0])))
+        if ok and active_config:
+            applied = elrs_backend.apply_active_layout(source, env, active_config)
+            if applied and applied.get("bin"):
+                self.events.put(("log", f"已自动应用自定义硬件配置: {applied['bin']}"))
+                self.events.put(("elrs_artifact", applied["bin"]))
+            elif applied and applied.get("warning"):
+                self.events.put(("log", f"自定义配置应用失败: {applied['warning']}"))
         self.events.put(("progress_mode", "determinate"))
         self.events.put(("busy", "0"))
         self.events.put(("status", "ELRS 固件编译完成" if ok
@@ -1950,7 +2006,14 @@ class App:
                 messagebox.showerror("配置失败", "user_defines 保存失败，已取消编译。")
                 return
             config = product["config"] if product else None
-            self.run_async(lambda: self._elrs_build_worker(source, env, config))
+            active = app_settings.active_layout()
+            active_config = (
+                active.get("config") if active and product
+                and active.get("config") == product["config"] else None
+            )
+            self.run_async(lambda: self._elrs_build_worker(
+                source, env, config, active_config
+            ))
             return
         result = self.cmake_args()
         if result:

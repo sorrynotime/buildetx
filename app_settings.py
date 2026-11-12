@@ -115,6 +115,23 @@ def output_dir() -> Path:
     return configured("output") or workspace() / "output"
 
 
+def active_layout() -> dict | None:
+    value = load().get("active_layout")
+    return value if isinstance(value, dict) else None
+
+
+def set_active_layout(data: dict) -> None:
+    settings = load()
+    settings["active_layout"] = data
+    save(settings)
+
+
+def clear_active_layout() -> None:
+    settings = load()
+    settings.pop("active_layout", None)
+    save(settings)
+
+
 def paths() -> dict[str, Path | None]:
     return {
         "workspace": workspace(),

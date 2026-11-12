@@ -435,6 +435,24 @@ def write_layout_override(
     return result
 
 
+def apply_active_layout(source: Path, env: str, config_path: str) -> dict | None:
+    """S3: regenerate the firmware copy using the active config override."""
+    active = app_settings.active_layout()
+    if not active or active.get("config") != config_path:
+        return None
+    json_path = Path(str(active.get("json", "")))
+    if not json_path.is_file():
+        return {"json": None, "bin": None, "bytes": 0,
+                "warning": "活动配置副本文件不存在，请重新保存配置。"}
+    try:
+        values = json.loads(json_path.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as exc:
+        return {"json": None, "bin": None, "bytes": 0, "warning": str(exc)}
+    return write_layout_override(
+        source, env, str(active.get("product", "custom")), values
+    )
+
+
 REGULATORY_DOMAINS = (
     "Regulatory_Domain_AU_915", "Regulatory_Domain_EU_868",
     "Regulatory_Domain_IN_866", "Regulatory_Domain_AU_433",
