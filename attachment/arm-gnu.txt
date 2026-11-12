@@ -1,0 +1,5 @@
+注意版本
+arm-gnu-toolchain-14.2.rel1-mingw-w64-x86_64-arm-none-eabi
+
+下载地址
+https://gitlab.arm.com/tooling/gnu-toolchains-for-arm
