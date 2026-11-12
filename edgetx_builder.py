@@ -14,6 +14,7 @@ import tkinter as tk
 from pathlib import Path
 from tkinter import filedialog, messagebox, ttk
 
+import app_settings
 import elrs_backend
 from builder_utils import external_python, resource_path, run_capture
 from edgetx_backend import (
@@ -203,6 +204,8 @@ class App:
             "log_pad_y": tk.IntVar(value=1),
         }
         self.layout_debug_window: tk.Toplevel | None = None
+        self.settings_window: tk.Toplevel | None = None
+        self.layout_viewer_window: tk.Toplevel | None = None
 
         self._setup_theme()
         self._build_ui()
@@ -751,6 +754,9 @@ class App:
             )
             button.pack(side="left", padx=3)
             self.system_buttons[name] = button
+        ttk.Button(
+            system_row, text="路径设置", command=self.open_settings,
+        ).pack(side="right", padx=(10, 0))
         row += 1
         self.source_label = ttk.Label(outer, text="EdgeTX 源码目录")
         self.source_label.grid(row=row, column=0, sticky="w", pady=4)
@@ -1134,8 +1140,150 @@ class App:
         ).grid(row=8, column=0, sticky="w", pady=(10, 6))
         ttk.Label(
             inner, textvariable=self.elrs_artifact, style="Panel.TLabel",
-            foreground="#5f6368", wraplength=780,
-        ).grid(row=8, column=1, columnspan=3, sticky="w", padx=(10, 0), pady=(10, 6))
+            foreground="#5f6368", wraplength=520,
+        ).grid(row=8, column=1, columnspan=2, sticky="w", padx=(10, 0), pady=(10, 6))
+        ttk.Button(
+            inner, text="查看硬件配置", command=self.open_layout_viewer,
+        ).grid(row=8, column=3, sticky="e", pady=(10, 6))
+
+    def open_settings(self):
+        if self.settings_window and self.settings_window.winfo_exists():
+            self.settings_window.deiconify()
+            self.settings_window.lift()
+            return
+        window = tk.Toplevel(self.root)
+        self.settings_window = window
+        window.title("数据目录设置")
+        window.transient(self.root)
+        window.geometry("680x400")
+        body = ttk.Frame(window, padding=12)
+        body.pack(fill="both", expand=True)
+        ttk.Label(
+            body,
+            text="打包成 exe 后程序目录可能只读，以下目录均可由用户选择；改动后 PlatformIO 可能需要重新安装或重新下载工具链。",
+            wraplength=640, justify="left",
+        ).pack(anchor="w", pady=(0, 10))
+        summary = tk.StringVar()
+
+        def refresh():
+            values = app_settings.paths()
+            core = values["pio_core"] or "PlatformIO 默认位置（用户目录 .platformio）"
+            summary.set(
+                f"数据工作目录: {values['workspace']}\n"
+                f"PlatformIO 虚拟环境: {values['pio_venv']}\n"
+                f"PlatformIO 工具链缓存: {core}\n"
+                f"配置副本目录: {values['overrides']}\n"
+                f"固件副本目录: {values['output']}"
+            )
+
+        ttk.Label(body, textvariable=summary, justify="left", wraplength=640).pack(
+            anchor="w", fill="x"
+        )
+        core_enabled = tk.BooleanVar(value=app_settings.pio_core_enabled())
+
+        def toggle_core():
+            app_settings.set_pio_core_enabled(core_enabled.get())
+            refresh()
+
+        ttk.Checkbutton(
+            body, text="使用自定义 PlatformIO 工具链缓存目录（会重新下载）",
+            variable=core_enabled, command=toggle_core,
+        ).pack(anchor="w", pady=(12, 4))
+        buttons = ttk.Frame(body)
+        buttons.pack(anchor="w", pady=(12, 0))
+
+        def choose():
+            value = filedialog.askdirectory(title="选择数据工作目录")
+            if value:
+                app_settings.set_workspace(Path(value))
+                refresh()
+                self.write_log(f"数据工作目录已设置: {value}")
+
+        def reset():
+            app_settings.reset_workspace()
+            app_settings.set_pio_core_enabled(False)
+            core_enabled.set(False)
+            refresh()
+            self.write_log("数据目录已恢复默认")
+
+        ttk.Button(buttons, text="选择工作目录", command=choose).pack(side="left", padx=(0, 6))
+        ttk.Button(buttons, text="恢复默认", command=reset).pack(side="left", padx=6)
+        ttk.Button(buttons, text="关闭", command=window.destroy).pack(side="left", padx=6)
+        refresh()
+
+    def open_layout_viewer(self):
+        if self.layout_viewer_window and self.layout_viewer_window.winfo_exists():
+            self.layout_viewer_window.destroy()
+        item = self.elrs_hardware.get(self.elrs_vendor.get(), {}).get(self.elrs_product.get())
+        if not item:
+            messagebox.showinfo("请先选择型号", "请先在厂商和型号下拉中选择一个具体型号。")
+            return
+        source = Path(self.elrs_source.get().strip())
+        info = elrs_backend.read_layout_config(source, item["config"])
+        if not info["entries"]:
+            messagebox.showinfo("无配置", info["warning"] or "该型号没有可显示的 layout 配置。")
+            return
+        window = tk.Toplevel(self.root)
+        self.layout_viewer_window = window
+        window.title(f"硬件配置（只读）- {info['product_name']}")
+        window.geometry("760x560")
+        body = ttk.Frame(window, padding=10)
+        body.pack(fill="both", expand=True)
+        overlay_count = sum(1 for entry in info["entries"] if "overlay" in entry["source"])
+        ttk.Label(body, text=f"型号: {info['product_name']}").pack(anchor="w")
+        ttk.Label(body, text=f"layout 文件: {info['layout_file']}").pack(anchor="w")
+        ttk.Label(
+            body,
+            text=f"条目: {len(info['entries'])}（其中 overlay 覆盖 {overlay_count} 项）；显示的是最终生效值",
+        ).pack(anchor="w", pady=(0, 6))
+        ttk.Label(body, text="搜索字段").pack(anchor="w")
+        search_var = tk.StringVar()
+        ttk.Entry(body, textvariable=search_var).pack(fill="x", pady=(2, 6))
+        frame = ttk.Frame(body)
+        frame.pack(fill="both", expand=True)
+        columns = ("key", "type", "value", "source")
+        tree = ttk.Treeview(frame, columns=columns, show="headings", height=18)
+        for column, text, width in (
+            ("key", "字段", 220), ("type", "类型", 80),
+            ("value", "当前值", 280), ("source", "来源", 140),
+        ):
+            tree.heading(column, text=text)
+            tree.column(column, width=width, anchor="w")
+        scroll = ttk.Scrollbar(frame, orient="vertical", command=tree.yview)
+        tree.configure(yscrollcommand=scroll.set)
+        tree.pack(side="left", fill="both", expand=True)
+        scroll.pack(side="right", fill="y")
+        self.layout_tree = tree
+
+        def display(value):
+            if isinstance(value, list):
+                return ", ".join(str(item) for item in value)
+            if value is True:
+                return "true"
+            if value is False:
+                return "false"
+            return json.dumps(value, ensure_ascii=False) if isinstance(value, (dict, str)) else str(value)
+
+        def refresh(*_args):
+            for row in tree.get_children():
+                tree.delete(row)
+            needle = search_var.get().strip().lower()
+            for entry in info["entries"]:
+                if needle and needle not in entry["key"].lower():
+                    continue
+                tree.insert("", "end", values=(
+                    entry["key"], entry["type"], display(entry["value"]), entry["source"]
+                ))
+
+        search_var.trace_add("write", refresh)
+        refresh()
+        ttk.Label(
+            body,
+            text="S1 只读预览：后续步骤提供编辑、校验与配置副本生成，不会改动原 layout 文件。",
+            foreground="#b45309", wraplength=720,
+        ).pack(anchor="w", pady=(8, 4))
+        ttk.Button(body, text="关闭", command=window.destroy).pack(anchor="e")
+        self.layout_search = search_var
 
     def switch_system(self, name: str):
         is_elrs = name == "elrs"

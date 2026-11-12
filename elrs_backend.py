@@ -17,21 +17,25 @@ import json
 import os
 import re
 import subprocess
-import sys
 import time
 from pathlib import Path
 
+import app_settings
 from builder_utils import external_python, run_capture
 
 DEFAULT_SOURCE = r"E:\Code\ExpressLRS"
 
 
 def venv_dir() -> Path:
-    if getattr(sys, "frozen", False):
-        base = Path(sys.executable).resolve().parent
-    else:
-        base = Path(__file__).resolve().parent
-    return base / "tools" / "pio-venv"
+    return app_settings.pio_venv_dir()
+
+
+def pio_env() -> dict[str, str]:
+    env = os.environ.copy()
+    core = app_settings.pio_core_dir()
+    if core:
+        env["PLATFORMIO_CORE_DIR"] = str(core)
+    return env
 
 
 def venv_python() -> Path:
@@ -49,7 +53,9 @@ def pio_version(python: str | None = None) -> str | None:
     python = python or pio_python()
     if not python:
         return None
-    code, output = run_capture([python, "-m", "platformio", "--version"])
+    code, output = run_capture(
+        [python, "-m", "platformio", "--version"], env=pio_env()
+    )
     if code != 0:
         return None
     return output.strip().splitlines()[-1] if output.strip() else None
@@ -129,7 +135,7 @@ def list_envs(source: Path) -> dict[str, list[str]]:
         return {}
     code, output = run_capture(
         [python, "-m", "platformio", "project", "config", "--json-output"],
-        cwd=workdir,
+        cwd=workdir, env=pio_env(),
     )
     if code != 0:
         return {}
@@ -178,7 +184,7 @@ def build_firmware(
     if not python or not pio_version(python):
         on_line("失败：PlatformIO 不可用，请先安装。")
         return False, []
-    child_env = os.environ.copy()
+    child_env = pio_env()
     if config:
         child_env["ELRS_UNIFIED_CONFIG"] = config
         on_line(f"硬件配置: {config}（自动注入，无需交互选择）")
@@ -262,6 +268,65 @@ def read_hardware_catalog(
                     "envs": matched,
                 }
     return dict(sorted(catalog.items(), key=lambda item: item[0].upper()))
+
+
+def read_layout_config(source: Path, config_path: str) -> dict:
+    """S1: effective hardware layout for one product (layout file + overlay)."""
+    result = {
+        "product_name": "", "layout_file": "", "layout_path": "",
+        "entries": [], "warning": "",
+    }
+    workdir = find_source(source)
+    if not workdir:
+        result["warning"] = "未找到 platformio.ini"
+        return result
+    targets_path = workdir / "hardware" / "targets.json"
+    if not targets_path.is_file():
+        targets_path = workdir.parent / "hardware" / "targets.json"
+    if not targets_path.is_file():
+        result["warning"] = "未找到 hardware/targets.json"
+        return result
+    try:
+        data = json.loads(targets_path.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as exc:
+        result["warning"] = str(exc)
+        return result
+    node = data
+    for part in config_path.split(".") if config_path else []:
+        node = node.get(part) if isinstance(node, dict) else None
+        if node is None:
+            result["warning"] = f"未找到配置路径: {config_path}"
+            return result
+    if not isinstance(node, dict):
+        result["warning"] = f"配置路径无效: {config_path}"
+        return result
+    result["product_name"] = str(node.get("product_name", ""))
+    layout_file = str(node.get("layout_file", ""))
+    result["layout_file"] = layout_file
+    if not layout_file:
+        result["warning"] = "该型号没有 layout 文件（旧款专属 target）"
+        return result
+    folder = "TX" if "_TX" in str(node.get("firmware", "")) else "RX"
+    layout_path = targets_path.parent / folder / layout_file
+    result["layout_path"] = str(layout_path)
+    try:
+        layout = json.loads(layout_path.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as exc:
+        result["warning"] = str(exc)
+        return result
+    entries = {
+        key: {"key": key, "type": type(value).__name__,
+              "value": value, "source": "layout"}
+        for key, value in layout.items()
+    }
+    for key, value in (node.get("overlay") or {}).items():
+        source = "overlay" if key in entries else "overlay (新增)"
+        entries[key] = {
+            "key": key, "type": type(value).__name__,
+            "value": value, "source": source,
+        }
+    result["entries"] = sorted(entries.values(), key=lambda item: item["key"])
+    return result
 
 
 REGULATORY_DOMAINS = (
@@ -349,7 +414,7 @@ def write_user_defines(source: Path, values: dict[str, str | bool]) -> tuple[boo
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="ExpressLRS PlatformIO 后端")
-    parser.add_argument("command", choices=("check", "install", "list", "build", "defines", "hardware"))
+    parser.add_argument("command", choices=("check", "install", "list", "build", "defines", "hardware", "layout"))
     parser.add_argument("--source", default=DEFAULT_SOURCE)
     parser.add_argument("--env", default="")
     parser.add_argument("--domain", choices=("默认", *REGULATORY_DOMAINS))
@@ -395,6 +460,20 @@ def main() -> int:
             for label, item in sorted(items.items()):
                 envs = ", ".join(item["envs"]) if item["envs"] else "当前源码无对应编译目标"
                 print(f"  {label}  ->  {envs}")
+        return 0
+    if args.command == "layout":
+        if not args.config:
+            print("layout 需要 --config <键路径>，如 radiomaster.tx_2400.boxer")
+            return 1
+        info = read_layout_config(source, args.config)
+        print(f"型号: {info['product_name']}")
+        print(f"layout: {info['layout_file']}")
+        print(f"条目: {len(info['entries'])}")
+        if info["warning"]:
+            print(f"提示: {info['warning']}")
+        for entry in info["entries"]:
+            print(f"  {entry['key']:<24} {entry['type']:<6} "
+                  f"{json.dumps(entry['value'], ensure_ascii=False):<28} {entry['source']}")
         return 0
     if args.command == "defines":
         values = read_user_defines(source)
