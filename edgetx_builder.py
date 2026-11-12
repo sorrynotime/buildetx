@@ -1249,6 +1249,17 @@ class App:
             body,
             text=f"条目: {len(info['entries'])}（其中 overlay 覆盖 {overlay_count} 项）；显示最终生效值",
         ).pack(anchor="w", pady=(0, 6))
+        device_row = ttk.Frame(body)
+        device_row.pack(fill="x", pady=(4, 6))
+        ttk.Label(device_row, text="Lua 设备名").pack(side="left")
+        self.layout_device_name = tk.StringVar(value=info["lua_name"])
+        ttk.Entry(
+            device_row, textvariable=self.layout_device_name, width=24,
+        ).pack(side="left", padx=8)
+        ttk.Label(
+            device_row, text="最多 16 字节，写入固件尾部后由 Lua 读取",
+            foreground="#5f6368",
+        ).pack(side="left")
         ttk.Label(body, text="搜索字段").pack(anchor="w")
         search_var = tk.StringVar()
         ttk.Entry(body, textvariable=search_var).pack(fill="x", pady=(2, 6))
@@ -1360,9 +1371,10 @@ class App:
             messagebox.showerror("配置无效", message)
             return
         source = Path(self.elrs_source.get().strip())
+        device_name = self.layout_device_name.get().strip() or None
         result = elrs_backend.write_layout_override(
             source, self.elrs_env.get(),
-            self.layout_info["product_name"], self.layout_values,
+            self.layout_info["product_name"], self.layout_values, device_name,
         )
         if not result["json"]:
             messagebox.showerror("保存失败", result["warning"])
@@ -1372,8 +1384,11 @@ class App:
             "product": self.layout_info["product_name"],
             "json": result["json"],
             "env": self.elrs_env.get(),
+            "device_name": device_name or "",
         })
         lines = [f"配置副本: {result['json']}（{result['bytes']} 字节）"]
+        if device_name:
+            lines.append(f"Lua 设备名: {device_name}")
         if result["bin"]:
             lines.append(f"固件副本: {result['bin']}")
         lines.append("已设为活动配置：之后每次编译会自动应用到固件副本。")

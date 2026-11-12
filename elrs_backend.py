@@ -275,7 +275,7 @@ def read_hardware_catalog(
 def read_layout_config(source: Path, config_path: str) -> dict:
     """S1: effective hardware layout for one product (layout file + overlay)."""
     result = {
-        "product_name": "", "layout_file": "", "layout_path": "",
+        "product_name": "", "lua_name": "", "layout_file": "", "layout_path": "",
         "entries": [], "warning": "",
     }
     workdir = find_source(source)
@@ -303,6 +303,7 @@ def read_layout_config(source: Path, config_path: str) -> dict:
         result["warning"] = f"配置路径无效: {config_path}"
         return result
     result["product_name"] = str(node.get("product_name", ""))
+    result["lua_name"] = str(node.get("lua_name", ""))
     layout_file = str(node.get("layout_file", ""))
     result["layout_file"] = layout_file
     if not layout_file:
@@ -401,15 +402,36 @@ def _slug(text: str) -> str:
     return re.sub(r"[^A-Za-z0-9_.-]+", "_", str(text)).strip("_")[:80] or "custom"
 
 
+def validate_device_name(name: str) -> tuple[bool, str]:
+    size = len(name.encode("utf-8"))
+    if size >= 16:
+        return False, f"设备名 {size} 字节，超过 ELRS 的 16 字节上限（建议英文数字不超过 15 个字符）"
+    return True, ""
+
+
+def set_firmware_device_name(stream, name: str) -> None:
+    """S4: overwrite the 16-byte Lua device-name area of a firmware copy."""
+    offset = firmware_layout_offset(stream) - CONFIG_HEADER_SIZE + 128
+    stream.seek(offset)
+    stream.write((name.encode("utf-8") + b"\0" * 16)[:16])
+
+
 def write_layout_override(
-    source: Path, env: str, product_name: str, values: dict
+    source: Path, env: str, product_name: str, values: dict,
+    device_name: str | None = None,
 ) -> dict:
-    """S2: write a config copy and a firmware copy, never touching originals."""
-    result = {"json": None, "bin": None, "bytes": 0, "warning": ""}
+    """S2/S4: write config and firmware copies, never touching originals."""
+    result = {"json": None, "bin": None, "bytes": 0, "warning": "",
+              "device": device_name or ""}
     ok, message = validate_layout(values)
     if not ok:
         result["warning"] = message
         return result
+    if device_name:
+        ok, message = validate_device_name(device_name)
+        if not ok:
+            result["warning"] = message
+            return result
     data = encode_layout(values)
     overrides = app_settings.overrides_dir()
     overrides.mkdir(parents=True, exist_ok=True)
@@ -431,6 +453,8 @@ def write_layout_override(
     with custom.open("r+b") as stream:
         stream.seek(firmware_layout_offset(stream))
         stream.write(data + b"\0" * (CONFIG_LAYOUT_SIZE - len(data)))
+        if device_name:
+            set_firmware_device_name(stream, device_name)
     result["bin"] = str(custom)
     return result
 
@@ -449,7 +473,8 @@ def apply_active_layout(source: Path, env: str, config_path: str) -> dict | None
     except (OSError, ValueError) as exc:
         return {"json": None, "bin": None, "bytes": 0, "warning": str(exc)}
     return write_layout_override(
-        source, env, str(active.get("product", "custom")), values
+        source, env, str(active.get("product", "custom")), values,
+        active.get("device_name"),
     )
 
 
