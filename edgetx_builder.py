@@ -1650,9 +1650,28 @@ class App:
     ):
         self.events.put(("busy", "1"))
         self.events.put(("progress_mode", "indeterminate"))
-        ok, artifacts = elrs_backend.build_firmware(
-            source, env, lambda line: self.events.put(("log", line)), config
-        )
+        self.events.put(("status", f"正在编译 {env}（首次需下载工具链）"))
+        phase = {"last": ""}
+
+        def on_line(line: str):
+            self.events.put(("log", line))
+            low = line.lower()
+            if ("downloading" in low or "unpacking" in low
+                    or "platform manager" in low or "tool manager" in low):
+                key, text = "download", "正在下载/安装工具链（首次较慢）"
+            elif "library manager" in low or "installing" in low:
+                key, text = "deps", "正在安装依赖库"
+            elif "compiling" in low or "archiving" in low:
+                key, text = "compile", "正在编译固件"
+            elif "linking" in low or "generating" in low or "building .pio" in low:
+                key, text = "link", "正在生成固件"
+            else:
+                return
+            if phase["last"] != key:
+                phase["last"] = key
+                self.events.put(("status", text))
+
+        ok, artifacts = elrs_backend.build_firmware(source, env, on_line, config)
         for artifact in artifacts:
             self.events.put(("log", f"产物: {artifact}"))
         if artifacts:
