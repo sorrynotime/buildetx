@@ -1239,7 +1239,10 @@ class App:
         window = tk.Toplevel(self.root)
         self.layout_viewer_window = window
         window.title(f"硬件配置 - {info['product_name']}")
-        window.geometry("760x590")
+        screen_height = self.root.winfo_screenheight()
+        height = max(640, min(720, screen_height - 80))
+        window.geometry(f"780x{height}")
+        window.minsize(740, 600)
         body = ttk.Frame(window, padding=10)
         body.pack(fill="both", expand=True)
         overlay_count = sum(1 for entry in info["entries"] if "overlay" in entry["source"])
